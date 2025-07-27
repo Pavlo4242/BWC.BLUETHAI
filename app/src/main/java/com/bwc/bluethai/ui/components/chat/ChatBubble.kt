@@ -1,4 +1,4 @@
-package com.bwc.translator.ui.components.chat
+package com.bwc.bluethai.ui.components.chat
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -13,17 +13,20 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.bwc.translator.ui.theme.BubbleEnBg
-import com.bwc.translator.ui.theme.BubbleThBg
-import com.bwc.translator.ui.theme.Sarabun
-import com.bwc.translator.ui.theme.TextPrimary
-import com.bwc.translator.ui.theme.TextSecondary
+import com.bwc.bluethai.ui.theme.BWCTranslatorTheme
+import com.bwc.bluethai.ui.theme.BubbleEnBg
+import com.bwc.bluethai.ui.theme.BubbleThBg
+import com.bwc.bluethai.ui.theme.Sarabun
+import com.bwc.bluethai.ui.theme.TextPrimary
+import com.bwc.bluethai.ui.theme.TextSecondary
 
 @Composable
 fun ChatBubble(
@@ -86,6 +89,68 @@ fun ChatBubble(
                     }
                 }
             }
+        }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun ChatBubblePreview_English() {
+    BWCTranslatorTheme {
+        Surface(modifier = Modifier.padding(16.dp)) {
+            ChatBubble(
+                text = "Hello, how are you doing today?",
+                isEnglish = true,
+                onSpeakClick = {},
+                onCopyClick = {}
+            )
+        }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun ChatBubblePreview_Thai() {
+    BWCTranslatorTheme {
+        Surface(modifier = Modifier.padding(16.dp)) {
+            ChatBubble(
+                text = "สวัสดีวันนี้เป็นอย่างไรบ้าง",
+                isEnglish = false,
+                onSpeakClick = {},
+                onCopyClick = {}
+            )
+        }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun ChatBubblePreview_English_Copied() {
+    BWCTranslatorTheme {
+        Surface(modifier = Modifier.padding(16.dp)) {
+            ChatBubble(
+                text = "This text has been copied.",
+                isEnglish = true,
+                onSpeakClick = {},
+                onCopyClick = {},
+                showCopiedIndicator = true
+            )
+        }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun ChatBubblePreview_Interim() {
+    BWCTranslatorTheme {
+        Surface(modifier = Modifier.padding(16.dp)) {
+            ChatBubble(
+                text = "This is an interim result...",
+                isEnglish = true,
+                isInterim = true,
+                onSpeakClick = {},
+                onCopyClick = {}
+            )
         }
     }
 }

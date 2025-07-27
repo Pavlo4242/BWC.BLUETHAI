@@ -1,4 +1,4 @@
-package com.bwc.translator.services
+package com.bwc.bluethai.services
 
 import android.content.Context
 import android.content.Intent
@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -77,6 +78,9 @@ class SpeechRecognizerService(private val context: Context) {
 
     init {
         speechRecognizer?.setRecognitionListener(recognitionListener)
+        if (speechRecognizer == null) {
+            Log.e("SpeechRecognizer", "Speech recognition not available")
+        }
     }
 
     fun startListening(isEnglish: Boolean) {
@@ -95,7 +99,7 @@ class SpeechRecognizerService(private val context: Context) {
                 putExtra("android.speech.extra.PROFANITY_FILTER", false)  // Hidden API
             }
             putExtra("profanity_filter", false)  // Alternative key some devices use
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)  // Force on-device recognition
+
         }
 
         try {

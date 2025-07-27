@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "BWCTranslator"
+rootProject.name = "BlueThai"
 include(":app")

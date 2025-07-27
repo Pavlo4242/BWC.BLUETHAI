@@ -1,0 +1,2608 @@
+ 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\MainActivity.kt --- 
+package com.bwc.bluethai
+
+import android.content.Intent
+import android.net.Uri
+import android.os.Bundle
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.setContent
+import androidx.activity.viewModels
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.core.content.ContextCompat.startActivity
+import androidx.core.content.FileProvider
+import com.bwc.bluethai.ui.screens.DebugLogScreen
+import com.bwc.bluethai.ui.screens.SettingsScreen
+import com.bwc.bluethai.ui.screens.TranslatorScreen
+import com.bwc.bluethai.ui.theme.BWCTranslatorTheme
+import com.bwc.bluethai.ui.theme.getDynamicTypography
+import com.bwc.bluethai.viewmodel.TranslatorUiState
+import com.bwc.bluethai.viewmodel.TranslatorViewModel
+import com.bwc.bluethai.viewmodel.availableApiKeys
+import java.io.File
+import java.io.IOException
+import java.io.FileOutputStream
+import com.bwc.bluethai.BuildConfig // Added missing import
+
+class MainActivity : ComponentActivity() {
+
+    private val translatorViewModel: TranslatorViewModel by viewModels {
+        TranslatorViewModel.TranslatorViewModelFactory(application)
+    }
+
+    private val logFileName = "app_logs.txt"
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // Initialize Log File
+        val logFile = File(applicationContext.filesDir, logFileName)
+        if (!logFile.exists()) {
+            try {
+                logFile.createNewFile()
+            } catch (e: IOException) {
+                android.util.Log.e("MainActivity", "Error creating log file: ${e.message}")
+                // Handle error appropriately, maybe disable logging
+            }
+        }
+
+        setContent {
+            var currentScreen by remember { mutableStateOf("Translator") }
+            val uiState by translatorViewModel.uiState.collectAsState()
+            val successState = uiState as? TranslatorUiState.Success
+
+            val dynamicTypography = getDynamicTypography(successState?.baseFontSize ?: 18)
+
+            BWCTranslatorTheme(typography = dynamicTypography) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    BackHandler(enabled = currentScreen != "Translator") {
+                        when (currentScreen) {
+                            "DebugLogs" -> currentScreen = "Settings"
+                            "Settings" -> currentScreen = "Translator"
+                        }
+                    }
+
+                    when (currentScreen) {
+                        "Translator" -> TranslatorScreen(
+                            viewModel = translatorViewModel
+                            // No onNavigateToHistory needed here as it's handled by SettingsScreen
+                        )
+                        "Settings" -> {
+                            if (successState != null) {
+                                val keys = availableApiKeys
+                                SettingsScreen(
+                                    availableKeys = keys,
+                                    currentKeyName = successState.currentApiKeyName,
+                                    onApiKeySelected = { translatorViewModel.setApiKey(it) },
+                                    currentFontSize = successState.baseFontSize,
+                                    onFontSizeChange = { translatorViewModel.setFontSize(it) },
+                                    useCustomPrompt = successState.useCustomPrompt,
+                                    onUseCustomPromptChange = {
+                                        translatorViewModel.setUseCustomPrompt(
+                                            it
+                                        )
+                                    },
+                                    modelSelection = successState.modelSelection,
+                                    onModelSelectionChange = {
+                                        translatorViewModel.updateModelSelection(
+                                            it
+                                        )
+                                    },
+                                    onNavigateToDebugLogs = { currentScreen = "DebugLogs" },
+                                    // Provide the onNavigateToHistory lambda here
+                                    onNavigateToHistory = {
+                                        translatorViewModel.toggleHistoryDialog(
+                                            true
+                                        )
+                                    },
+                                    onBackupDatabase = {
+                                        translatorViewModel.backupDatabase(this@MainActivity)
+                                        Toast.makeText(
+                                            this@MainActivity,
+                                            "Database Backup Initiated.",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    },
+
+                                    onNavigateBack = { currentScreen = "Translator" }
+                                )
+                            }
+                        }
+                        "DebugLogs" -> {
+                            if (successState != null) {
+                                DebugLogScreen(
+                                    logs = successState.debugLogs,
+                                    onExportLogs = { exportLogs() },
+                                    onNavigateBack = { currentScreen = "Settings" }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+    // Function to export logs
+    private fun exportLogs() {
+        val logFile = File(applicationContext.filesDir, logFileName)
+        if (!logFile.exists()) {
+            Toast.makeText(this, "No logs found.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // Create a share intent
+        val uri = FileProvider.getUriForFile(
+            this,
+            "${BuildConfig.APPLICATION_ID}.fileprovider", // Use your app's FileProvider authority
+            logFile
+        )
+
+        val shareIntent = Intent(Intent.ACTION_SEND)
+        shareIntent.type = "text/plain"
+        shareIntent.putExtra(Intent.EXTRA_SUBJECT, "App Logs")
+        shareIntent.putExtra(Intent.EXTRA_STREAM, uri)
+        shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+
+        try {
+            startActivity(Intent.createChooser(shareIntent, "Share Logs"))
+        } catch (e: Exception) {
+            Toast.makeText(this, "No app found to handle file sharing", Toast.LENGTH_SHORT).show()
+            android.util.Log.e("MainActivity", "Error sharing logs: ${e.message}")
+        }
+    }
+} 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\data\local\AppDatabase.kt --- 
+package com.bwc.bluethai.data.local
+
+
+import android.content.Context
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
+import androidx.room.Database
+import androidx.room.Room
+import androidx.room.RoomDatabase
+import androidx.room.TypeConverters
+import com.bwc.bluethai.data.model.ConversationSession
+import com.bwc.bluethai.data.model.TranslationEntry
+
+@Database(
+    entities = [
+        ConversationSession::class,
+        TranslationEntry::class
+    ],
+    version = 2,  // Roll back version since we're removing WebSocket tables
+    exportSchema = false
+)
+@TypeConverters(Converters::class)
+abstract class AppDatabase : RoomDatabase() {
+    abstract fun sessionDao(): SessionDao
+    abstract fun entryDao(): EntryDao
+
+    companion object {
+        @Volatile
+        private var INSTANCE: AppDatabase? = null
+
+        fun getDatabase(context: Context): AppDatabase {
+            return INSTANCE ?: synchronized(this) {
+                val instance = Room.databaseBuilder(
+                    context.applicationContext,
+                    AppDatabase::class.java,
+                    "translator_database"
+                )
+                    .fallbackToDestructiveMigration() // Add this for now to handle version change
+                    .build()
+                INSTANCE = instance
+                instance
+            }
+        }
+    }
+} 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\data\local\Converters.kt --- 
+package com.bwc.bluethai.data.local
+
+import androidx.room.TypeConverter
+import java.util.Date
+
+class Converters {
+    @TypeConverter
+    fun fromTimestamp(value: Long?): Date? {
+        return value?.let { Date(it) }
+    }
+
+    @TypeConverter
+    fun dateToTimestamp(date: Date?): Long? {
+        return date?.time
+    }
+} 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\data\local\Daos.kt --- 
+package com.bwc.bluethai.data.local
+
+import androidx.room.*
+import com.bwc.bluethai.data.model.ConversationSession
+import com.bwc.bluethai.data.model.SessionWithPreview
+import com.bwc.bluethai.data.model.TranslationEntry
+import kotlinx.coroutines.flow.Flow
+
+@Dao
+interface SessionDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSession(session: ConversationSession): Long
+
+    @Query("SELECT * FROM sessions ORDER BY startTime DESC")
+    fun getAllSessions(): Flow<List<ConversationSession>>
+
+    @Transaction
+    @Query("""
+        SELECT s.id, s.startTime, (
+            SELECT COALESCE(
+                CASE WHEN e.isFromEnglish THEN e.englishText ELSE e.thaiText END,
+                'No messages'
+            )
+            FROM entries e 
+            WHERE e.sessionId = s.id 
+            ORDER BY e.timestamp ASC 
+            LIMIT 1
+        ) as previewText
+        FROM sessions s
+        ORDER BY s.startTime DESC
+    """)
+    fun getSessionsWithPreviews(): Flow<List<SessionWithPreview>>
+
+    @Transaction
+    suspend fun deleteSessionAndEntries(sessionId: Long) {
+        deleteEntriesForSession(sessionId)
+        deleteSessionById(sessionId)
+    }
+
+    @Query("DELETE FROM sessions WHERE id = :sessionId")
+    suspend fun deleteSessionById(sessionId: Long)
+
+    @Query("DELETE FROM entries WHERE sessionId = :sessionId")
+    suspend fun deleteEntriesForSession(sessionId: Long)
+}
+
+@Dao
+interface EntryDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertEntry(entry: TranslationEntry)
+
+    @Query("SELECT * FROM entries WHERE sessionId = :sessionId ORDER BY timestamp ASC")
+    fun getEntriesForSession(sessionId: Long): Flow<List<TranslationEntry>>
+
+    @Query("DELETE FROM entries WHERE sessionId = :sessionId")
+    suspend fun deleteEntriesForSession(sessionId: Long)
+} 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\data\model\ChatState.kt --- 
+package com.bwc.bluethai.data.model
+
+data class ChatState(
+    val entries: List<Entry>,
+    val interimText: String,
+    val isInputEnglish: Boolean,
+    val streamingTranslation: Pair<String, String>?
+) {
+    data class Entry(
+        val id: Int,
+        val englishText: String,
+        val thaiText: String,
+        val isFromEnglish: Boolean
+    )
+} 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\data\model\Models.kt --- 
+package com.bwc.bluethai.data.model
+
+import androidx.room.Entity
+import androidx.room.PrimaryKey
+import java.util.Date
+import androidx.room.ForeignKey
+import androidx.room.Index
+
+
+@Entity(
+    tableName = "sessions",
+    indices = [Index(value = ["startTime"])]
+)
+data class ConversationSession(
+    @PrimaryKey val id: Long = System.currentTimeMillis(),
+    val startTime: Date = Date()
+)
+
+data class SessionWithPreview(
+    val id: Long,
+    val startTime: Date,
+    val previewText: String?
+)
+
+data class SessionPreview(
+    val session: ConversationSession,
+    val previewText: String
+)
+
+@Entity(
+    tableName = "entries",
+    indices = [
+        Index(value = ["sessionId"]),
+        Index(value = ["timestamp"])
+    ],
+    foreignKeys = [ForeignKey(
+        entity = ConversationSession::class,
+        parentColumns = ["id"],
+        childColumns = ["sessionId"],
+        onDelete = ForeignKey.CASCADE
+    )]
+)
+data class TranslationEntry(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val sessionId: Long,
+    val englishText: String,
+    val thaiText: String,
+    val timestamp: Date = Date(),
+    val isFromEnglish: Boolean
+) 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\data\repository\TranslationRepository.kt --- 
+package com.bwc.bluethai.data.repository
+
+import com.bwc.bluethai.BuildConfig
+import com.bwc.bluethai.data.*
+import com.bwc.bluethai.data.model.*
+import android.content.Context
+import android.util.Log
+import com.bwc.bluethai.data.local.AppDatabase
+import com.bwc.bluethai.data.model.ConversationSession
+import com.bwc.bluethai.data.model.TranslationEntry
+import com.google.ai.client.generativeai.GenerativeModel
+import com.google.ai.client.generativeai.type.BlockThreshold
+import com.google.ai.client.generativeai.type.HarmCategory
+import com.google.ai.client.generativeai.type.SafetySetting
+import com.google.ai.client.generativeai.type.content
+import com.google.ai.client.generativeai.type.generationConfig
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+
+class TranslationRepository(context: Context) {
+
+    companion object {
+        const val PATTAYA_PROMPT_TO_ENGLISH = """
+You are a real-time Thai/Isaan-to-English interpreter for Pattaya bar conversations. Translate ONLY the input text to modern, informal English following these rules:
+1. **Input Languages Accepted**: Central Thai (standard or slang), Isaan dialect (Northeastern Thai/Lao-influenced).
+2. **Output Constraints**: ONLY output the English translation. NO explanations, notes, or apologies. Errors (untranslatable input) → "[UNTRANSLATABLE]".
+3. **Translation Principles**: Prioritize cultural equivalence. Preserve vulgarity, threats, and transactional language. Isaan terms → closest English slang. Force ambiguous phonemes into Thai/Isaan.
+4. **Examples**: "เหี้ย" → "motherfucker"; "เฮ็ดส่ำใด?" → "What the fuck are you doing?"; "สัก 2,000 บาทก็พอแล้ว" → "2k baht and I'm yours."; "ควย!" → "Fuck you!".
+5. **Strict Format**: Input: "[Thai/Isaan text]"; Output: "[English translation ONLY]".
+"""
+        const val PATTAYA_PROMPT_TO_THAI = """
+You are a real-time English-to-Thai/Isaan interpreter for Pattaya bar conversations. Translate ONLY the input text to informal Thai/Isaan following these rules:
+1. **Input Language Accepted**: Modern informal English.
+2. **Output Constraints**: ONLY output the Thai/Isaan translation. NO explanations or notes. Errors → "[UNTRANSLATABLE]".
+3. **Translation Principles**: Use aggressive pronouns (มึง/กู) and slang. English vulgarity → strongest Thai/Isaan equivalent. Transactional terms → direct Thai phrasing.
+4. **Examples**: "Fuck off!" → "ไสหัวไป!"; "How much for short time?" → "ชั่วคราวเท่าไหร่?"; "You’re scum." → "มึงมันขยะ"; "Wanna get high?" → "อยากเมาป่ะ?".
+5. **Strict Format**: Input: "[English text]"; Output: "[Thai/Isaan translation ONLY]".
+"""
+        const val PIRATE_PROMPT_TO_THAI = "\"\"\"\n" +
+                "English→Thai/Isaan bar translator. Rules:\n" +
+                "1. Input: English. Output: ONLY Thai/Isaan.\n" +
+                "2. Use มึง/กู + strongest slang matching vulgarity.\n" +
+                "3. Errors → \"[UNTRANSLATABLE]\".\n" +
+                "\n" +
+                "Examples:\n" +
+                "\"Fuck off!\" → \"ไสหัวไป!\"\n" +
+                "\"Short time?\" → \"ชั่วคราวเท่าไหร่?\"\n" +
+                "\"Wanna get high?\" → \"อยากเมาป่ะ?\"\n" +
+                "\n" +
+                "Format: \"[input]\" → \"[output]\""
+        const val PIRATE_PROMPT_TO_ENGLISH = "Role: Thai/Isaan-to-English bar translator.  \n" +
+                "\n" +
+                "Rules:  \n" +
+                "1. Input: Thai/Isaan only. Output: Raw English translation.  \n" +
+                "2. Preserve tone (vulgarity/threats/transactions).  \n" +
+                "3. No explanations. Errors → \"[UNTRANSLATABLE]\".  \n" +
+                "\n" +
+                "Examples:  \n" +
+                "- \"เหี้ย\" → \"motherfucker\"  \n" +
+                "- \"เฮ็ดส่ำใด?\" → \"WTF are you doing?\"  \n" +
+                "- \"2,000 บาท\" → \"2k baht\".  \n" +
+                "\n" +
+                "Format:  \n" +
+                "Input: \"[text]\" → Output: \"[translation]\"\n" +
+                "\"\"\""
+    }
+
+    var generativeModel: GenerativeModel? = null
+        private set
+
+    private val sessionDao = AppDatabase.getDatabase(context).sessionDao()
+    private val entryDao = AppDatabase.getDatabase(context).entryDao()
+
+    fun reinitializeModel(apiKey: String, modelName: String, systemInstruction: String) {
+        if (apiKey.isBlank()) {
+            generativeModel = null
+            return
+        }
+        val config = generationConfig {
+            temperature = 0.7f
+        }
+        val safetySettings = listOf(
+            SafetySetting(HarmCategory.HARASSMENT, BlockThreshold.NONE),
+            SafetySetting(HarmCategory.HATE_SPEECH, BlockThreshold.NONE),
+            SafetySetting(HarmCategory.SEXUALLY_EXPLICIT, BlockThreshold.NONE),
+            SafetySetting(HarmCategory.DANGEROUS_CONTENT, BlockThreshold.NONE),
+        )
+
+        generativeModel = GenerativeModel(
+            modelName = modelName,
+            apiKey = apiKey,
+            generationConfig = config,
+            safetySettings = safetySettings,
+            systemInstruction = content { text(systemInstruction) }
+        )
+    }
+
+    fun translateText(text: String): Flow<String> = flow {
+        val model = generativeModel ?: throw IllegalStateException("GenerativeModel not initialized")
+
+
+        var fullResponse = ""
+        try {
+            model.generateContentStream(text).collect { chunk ->
+                chunk.text?.let {
+                    emit(it)
+                } ?: run {
+                    Log.e("Translation", "Empty chunk received")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("Translation", "Error during translation", e)
+            throw e
+        }
+    }.flowOn(Dispatchers.IO)
+
+    // Database operations
+    fun getAllSessions(): Flow<List<ConversationSession>> = sessionDao.getAllSessions()
+
+    fun getSessionsWithPreviews(): Flow<List<SessionPreview>> =
+        sessionDao.getSessionsWithPreviews().map { sessionPreviews ->
+            sessionPreviews.map {
+                SessionPreview(
+                    session = ConversationSession(it.id, it.startTime),
+                    previewText = it.previewText ?: "No messages"
+                )
+            }
+        }.flowOn(Dispatchers.IO)
+
+    fun getEntriesForSession(sessionId: Long): Flow<List<TranslationEntry>> = entryDao.getEntriesForSession(sessionId)
+
+    suspend fun startNewSession(): Long {
+        val newSession = ConversationSession()
+        return sessionDao.insertSession(newSession)
+    }
+
+    suspend fun saveTranslationEntry(entry: TranslationEntry) {
+        entryDao.insertEntry(entry)
+    }
+
+    suspend fun deleteSession(sessionId: Long) {
+        entryDao.deleteEntriesForSession(sessionId)
+        sessionDao.deleteSessionById(sessionId)
+    }
+} 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\services\SpeechRecognizerService.kt --- 
+package com.bwc.bluethai.services
+
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.util.Log
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
+sealed class RecognitionState {
+    data object Idle : RecognitionState()
+    data object Listening : RecognitionState()
+    data class PartialResult(val text: String) : RecognitionState()
+    data class FinalResult(val text: String) : RecognitionState()
+    data class Error(val message: String) : RecognitionState()
+}
+
+class SpeechRecognizerService(private val context: Context) {
+
+    private val _recognitionState = MutableStateFlow<RecognitionState>(RecognitionState.Idle)
+    val recognitionState: StateFlow<RecognitionState> = _recognitionState.asStateFlow()
+
+    private val speechRecognizer: SpeechRecognizer? = if (SpeechRecognizer.isRecognitionAvailable(context)) {
+        SpeechRecognizer.createSpeechRecognizer(context)
+    } else {
+        null
+    }
+
+    private val recognitionListener = object : RecognitionListener {
+        override fun onReadyForSpeech(params: Bundle?) {
+            _recognitionState.value = RecognitionState.Listening
+        }
+        override fun onBeginningOfSpeech() {}
+        override fun onRmsChanged(rmsdB: Float) {}
+        override fun onBufferReceived(buffer: ByteArray?) {}
+        override fun onEndOfSpeech() {
+            _recognitionState.value = RecognitionState.Idle
+        }
+        override fun onError(error: Int) {
+            val message = when (error) {
+                SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
+                SpeechRecognizer.ERROR_CLIENT -> "Client side error"
+                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Insufficient permissions"
+                SpeechRecognizer.ERROR_NETWORK -> "Network error"
+                SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network timeout"
+                SpeechRecognizer.ERROR_NO_MATCH -> "No speech input"
+                SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recognizer busy"
+                SpeechRecognizer.ERROR_SERVER -> "Server error"
+                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech input"
+                else -> "Recognition error (code: $error)"
+            }
+
+            if (error != SpeechRecognizer.ERROR_NO_MATCH &&
+                error != SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
+                _recognitionState.value = RecognitionState.Error(message)
+            }
+            _recognitionState.value = RecognitionState.Idle
+        }
+        override fun onResults(results: Bundle?) {
+            val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+            if (!matches.isNullOrEmpty()) {
+                _recognitionState.value = RecognitionState.FinalResult(matches[0])
+            }
+        }
+        override fun onPartialResults(partialResults: Bundle?) {
+            val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+            if (!matches.isNullOrEmpty()) {
+                _recognitionState.value = RecognitionState.PartialResult(matches[0])
+            }
+        }
+        override fun onEvent(eventType: Int, params: Bundle?) {}
+    }
+
+    init {
+        speechRecognizer?.setRecognitionListener(recognitionListener)
+        if (speechRecognizer == null) {
+            Log.e("SpeechRecognizer", "Speech recognition not available")
+        }
+    }
+
+    fun startListening(isEnglish: Boolean) {
+        if (speechRecognizer == null) {
+            _recognitionState.value = RecognitionState.Error("Speech recognizer not available")
+            return
+        }
+
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, if (isEnglish) "en-US" else "th-TH")
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+
+            // Disable profanity filter using different methods
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                putExtra("android.speech.extra.PROFANITY_FILTER", false)  // Hidden API
+            }
+            putExtra("profanity_filter", false)  // Alternative key some devices use
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)  // Force on-device recognition
+        }
+
+        try {
+            speechRecognizer.startListening(intent)
+        } catch (e: Exception) {
+            _recognitionState.value = RecognitionState.Error("Recognition failed: ${e.localizedMessage}")
+        }
+    }
+
+    fun stopListening() {
+        try {
+            speechRecognizer?.stopListening()
+        } catch (e: Exception) {
+            _recognitionState.value = RecognitionState.Error("Stop failed: ${e.localizedMessage}")
+        } finally {
+            _recognitionState.value = RecognitionState.Idle
+        }
+    }
+
+    fun destroy() {
+        try {
+            speechRecognizer?.destroy()
+        } catch (e: Exception) {
+            // Log destruction error if needed
+        }
+    }
+} 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\services\TextToSpeechService.kt --- 
+package com.bwc.bluethai.services
+
+import android.content.Context
+import android.speech.tts.TextToSpeech
+import android.util.Log
+import java.util.Locale
+
+class TextToSpeechService(context: Context, private val onInit: (Boolean) -> Unit) {
+    private var tts: TextToSpeech? = null
+    private var isReady = false
+    private val thaiLocale = Locale("th", "TH")
+    private val usLocale = Locale.US
+
+    init {
+        tts = TextToSpeech(context) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                isReady = true
+                Log.d("TTS", "TextToSpeech engine initialized successfully.")
+                // Check language availability
+                val thaiAvailable = tts?.isLanguageAvailable(thaiLocale) == TextToSpeech.LANG_AVAILABLE
+                val usAvailable = tts?.isLanguageAvailable(usLocale) == TextToSpeech.LANG_AVAILABLE
+                Log.d("TTS", "Thai available: $thaiAvailable, US English available: $usAvailable")
+                onInit(true)
+            } else {
+                Log.e("TTS", "Failed to initialize TextToSpeech engine.")
+                onInit(false)
+            }
+        }
+    }
+
+    fun speak(text: String, isEnglish: Boolean) {
+        if (!isReady) {
+            Log.e("TTS", "Engine not ready")
+            return
+        }
+        val locale = if (isEnglish) usLocale else thaiLocale
+        if (tts?.isLanguageAvailable(locale) != TextToSpeech.LANG_AVAILABLE) {
+            Log.e("TTS", "Language not available: ${locale.language}")
+            return
+        }
+        tts?.language = locale
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, null)
+    }
+
+    fun shutdown() {
+        tts?.stop()
+        tts?.shutdown()
+    }
+} 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\ui\components\ControlsBar.kt --- 
+package com.bwc.bluethai.ui.components
+
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.bwc.bluethai.ui.theme.*
+import com.bwc.bluethai.viewmodel.InputMode
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.*
+import androidx
+import com.bwc.bluethai.viewmodel.TranslatorUiState.Success
+
+@Composable
+fun ControlsBar(
+    isListening: Boolean,
+    isInputEnglish: Boolean,
+    isPlaybackEnabled: Boolean,
+    isMicEnabled: Boolean,
+    inputMode: InputMode,
+    onMicPress: () -> Unit,
+    onMicRelease: () -> Unit,
+    onMicClick: () -> Unit,
+    onSwapLanguage: () -> Unit,
+    onModeChange: (InputMode) -> Unit,
+    onPlaybackChange: (Boolean) -> Unit,
+    onSettingsClick: () -> Unit,
+
+
+
+
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 4.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Left side: Language Swap and Mode Toggle
+            ControlItem(modifier = Modifier.weight(1f), alignment = Alignment.CenterStart) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    LanguageSwap(
+                        isInputEnglish = isInputEnglish,
+                        onClick = onSwapLanguage
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    ModeToggle(
+                        currentMode = inputMode,
+                        onModeChange = onModeChange
+                    )
+                }
+            }
+
+            // Center: Microphone Button
+            MicButton(
+                isListening = isListening,
+                isEnabled = isMicEnabled,
+                inputMode = inputMode,
+                onPress = onMicPress,
+                onRelease = onMicRelease,
+                onClick = onMicClick
+            )
+
+            // Right side: Playback Toggle and Settings
+            ControlItem(modifier = Modifier.weight(1f), alignment = Alignment.CenterEnd) {
+                PlaybackToggle(
+                    isEnabled = isPlaybackEnabled,
+                    onEnabledChange = onPlaybackChange,
+                    onSettingsClick = onSettingsClick
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun MicButton(
+    isListening: Boolean,
+    isEnabled: Boolean,
+    inputMode: InputMode,
+    onPress: () -> Unit,
+    onRelease: () -> Unit,
+    onClick: () -> Unit
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val pulse by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500),
+            repeatMode = RepeatMode.Restart
+        ), label = "pulse_alpha"
+    )
+    val pulseAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.7f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500),
+            repeatMode = RepeatMode.Restart
+        ), label = "pulse_alpha"
+    )
+    val pulseAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.7f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500),
+            repeatMode = RepeatMode.Restart
+        ), label = "pulse_shadow"
+    )
+
+    val bgColor by animateColorAsState(
+        targetValue = when {
+            !isEnabled -> MicButtonDisabled
+            isListening -> MicButtonListening
+            else -> MicButton
+        }, label = "mic_bg_color"
+    )
+
+    Box(
+        modifier = Modifier
+            .size(72.dp)
+            .shadow(
+                elevation = if (isListening) pulse.dp else 0.dp,
+                shape = CircleShape,
+                ambientColor = MicButtonListening.copy(alpha = pulseAlpha),
+                spotColor = MicButtonListening.copy(alpha = pulseAlpha)
+            )
+            .clip(CircleShape)
+            .background(bgColor)
+            .pointerInput(inputMode) {
+                detectTapGestures(
+                    onTap = {
+                        if (inputMode == InputMode.TAP) {
+                            onClick()
+                        }
+                    },
+                    onPress = {
+                        if (inputMode == InputMode.HOLD) {
+                            onPress()
+                            tryAwaitRelease()
+                            onRelease()
+                        }
+                    }
+                )
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = Icons.Default.Mic,
+            contentDescription = "Microphone",
+            tint = Color.White,
+            modifier = Modifier.size(32.dp)
+        )
+    }
+}
+
+@Composable
+fun LanguageSwap(isInputEnglish: Boolean, onClick: () -> Unit) {
+    IconButton(onClick = onClick) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(if (isInputEnglish) "EN" else "TH", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Icon(Icons.Default.SwapHoriz, "Swap Languages")
+            Text(if (isInputEnglish) "TH" else "EN", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        }
+    }
+}
+
+@Composable
+fun ModeToggle(currentMode: InputMode, onModeChange: (InputMode) -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Switch(
+            checked = currentMode == InputMode.TAP,
+            onCheckedChange = { isChecked ->
+                onModeChange(if (isChecked) InputMode.TAP else InputMode.HOLD)
+            },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = Color(0xFF10B981)
+            )
+        )
+        Text(
+            text = if (currentMode == InputMode.HOLD) "Hold to Talk" else "Tap to Talk",
+            fontSize = 12.sp,
+            color = TextSecondary
+        )
+    }
+}
+
+
+@Composable
+fun PlaybackToggle(
+    isEnabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    onSettingsClick: () -> Unit
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        IconButton(onClick = { onEnabledChange(!isEnabled) }) {
+            Icon(
+                imageVector = if (isEnabled) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
+                contentDescription = if (isEnabled) "Disable Playback" else "Enable Playback",
+                tint = if (isEnabled) MaterialTheme.colorScheme.onSurface else TextSecondary
+            )
+        }
+        Text(
+            text = "Settings",
+            fontSize = 12.sp,
+            color = TextSecondary,
+            modifier = Modifier.clickable { onSettingsClick() }
+        )
+    }
+}
+
+@Composable
+private fun ControlItem(modifier: Modifier = Modifier, alignment: Alignment, content: @Composable () -> Unit) {
+    Box(
+        modifier = modifier,
+        contentAlignment = alignment
+    ) {
+        content()
+    }
+}
+
+ 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\ui\components\HistoryDialog.kt --- 
+package com.bwc.bluethai.ui.components
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import com.bwc.bluethai.data.model.ConversationSession
+import com.bwc.bluethai.data.model.SessionPreview
+import com.bwc.bluethai.ui.theme.BubbleThBg
+import com.bwc.bluethai.ui.theme.TextSecondary
+import java.text.SimpleDateFormat
+import java.util.Locale
+
+@Composable
+fun HistoryDialog(
+    sessions: List<SessionPreview>,
+    onDismiss: () -> Unit,
+    onSessionClick: (Long) -> Unit,
+    onDeleteClick: (Long) -> Unit,
+    onNewChatClick: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 8.dp
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    "Conversation History",
+                    style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+
+                if (sessions.isEmpty()) {
+                    Text("No past conversations.", color = TextSecondary)
+                } else {
+                    LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
+                        items(sessions) { sessionPreview ->
+                            com.bwc.bluethai.ui.components.HistoryItem(
+                                session = sessionPreview.session,
+                                preview = sessionPreview.previewText,
+                                onClick = { onSessionClick(sessionPreview.session.id) },
+                                onDelete = { onDeleteClick(sessionPreview.session.id) }
+                            )
+                        }
+                    }
+                }
+
+                Button(
+                    onClick = {
+                        onNewChatClick()
+                        onDismiss()
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 16.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = BubbleThBg)
+                ) {
+                    Text("Start New Chat")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HistoryItem(session: ConversationSession, preview: String, onClick: () -> Unit, onDelete: () -> Unit) {
+    val formatter = remember { SimpleDateFormat("MMM d, yyyy h:mm a", Locale.getDefault()) }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = preview.ifEmpty { "Empty Chat" },
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = formatter.format(session.startTime),
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary
+            )
+        }
+        IconButton(onClick = onDelete) {
+            Icon(Icons.Default.Delete, contentDescription = "Delete Session", tint = TextSecondary)
+        }
+    }
+} 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\ui\components\chat\ChatBubble.kt --- 
+package com.bwc.bluethai.ui.components.chat
+
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CornerSize
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.bwc.bluethai.ui.theme.BWCTranslatorTheme
+import com.bwc.bluethai.ui.theme.BubbleEnBg
+import com.bwc.bluethai.ui.theme.BubbleThBg
+import com.bwc.bluethai.ui.theme.Sarabun
+import com.bwc.bluethai.ui.theme.TextPrimary
+import com.bwc.bluethai.ui.theme.TextSecondary
+
+@Composable
+fun ChatBubble(
+    text: String,
+    isEnglish: Boolean,
+    modifier: Modifier = Modifier,
+    isInterim: Boolean = false,
+    onSpeakClick: (() -> Unit)? = null,
+    onCopyClick: (() -> Unit)? = null,
+    showCopiedIndicator: Boolean = false
+) {
+    Box(modifier = modifier) {
+        Card(
+            shape = RoundedCornerShape(16.dp).copy(
+                bottomStart = CornerSize(if (isEnglish) 4.dp else 16.dp),
+                bottomEnd = CornerSize(if (!isEnglish) 4.dp else 16.dp)
+            ),
+            colors = CardDefaults.cardColors(
+                containerColor = if (isEnglish) BubbleEnBg else BubbleThBg
+            ),
+            modifier = Modifier.padding(bottom = 24.dp)
+        ) {
+            Text(
+                text = text,
+                color = TextPrimary,
+                fontSize = 20.sp,
+                fontFamily = if (isEnglish) null else Sarabun,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+            )
+        }
+
+        if (!isInterim && (onSpeakClick != null || onCopyClick != null)) Row(
+            modifier = Modifier
+                .align(if (isEnglish) Alignment.BottomStart else Alignment.BottomEnd)
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            onSpeakClick?.let { onClick ->
+                IconButton(onClick = onClick, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        Icons.Default.VolumeUp,
+                        contentDescription = "Speak",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            onCopyClick?.let { onClick ->
+                IconButton(onClick = onClick, modifier = Modifier.size(32.dp)) {
+                    if (showCopiedIndicator) {
+                        Text("Copied!", fontSize = 10.sp, color = TextSecondary)
+                    } else {
+                        Icon(
+                            Icons.Default.ContentCopy,
+                            contentDescription = "Copy",
+                            tint = TextSecondary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun ChatBubblePreview_English() {
+    BWCTranslatorTheme {
+        Surface(modifier = Modifier.padding(16.dp)) {
+            ChatBubble(
+                text = "Hello, how are you doing today?",
+                isEnglish = true,
+                onSpeakClick = {},
+                onCopyClick = {}
+            )
+        }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun ChatBubblePreview_Thai() {
+    BWCTranslatorTheme {
+        Surface(modifier = Modifier.padding(16.dp)) {
+            ChatBubble(
+                text = "สวัสดีวันนี้เป็นอย่างไรบ้าง",
+                isEnglish = false,
+                onSpeakClick = {},
+                onCopyClick = {}
+            )
+        }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun ChatBubblePreview_English_Copied() {
+    BWCTranslatorTheme {
+        Surface(modifier = Modifier.padding(16.dp)) {
+            ChatBubble(
+                text = "This text has been copied.",
+                isEnglish = true,
+                onSpeakClick = {},
+                onCopyClick = {},
+                showCopiedIndicator = true
+            )
+        }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun ChatBubblePreview_Interim() {
+    BWCTranslatorTheme {
+        Surface(modifier = Modifier.padding(16.dp)) {
+            ChatBubble(
+                text = "This is an interim result...",
+                isEnglish = true,
+                isInterim = true,
+                onSpeakClick = {},
+                onCopyClick = {}
+            )
+        }
+    }
+}
+ 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\ui\components\chat\ChatList.kt --- 
+package com.bwc.bluethai.ui.components.chat
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import com.bwc.bluethai.data.model.ChatState
+import com.bwc.bluethai.ui.theme.TextSecondary
+import com.bwc.bluethai.viewmodel.TranslationEntryItem
+
+
+@Composable
+fun ChatList(
+    state: ChatState,
+    modifier: Modifier = Modifier,
+    onSpeakEnglish: (String) -> Unit = {},
+    onSpeakThai: (String) -> Unit = {}
+) {
+    val listState = rememberLazyListState()
+    val clipboardManager = LocalClipboardManager.current
+
+    // Track copied state per message
+    val copiedStates = remember { mutableStateMapOf<String, Boolean>() }
+
+    LaunchedEffect(state.entries.size, state.interimText, state.streamingTranslation) {
+        if (listState.layoutInfo.totalItemsCount > 0) {
+            listState.animateScrollToItem(listState.layoutInfo.totalItemsCount - 1)
+        }
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = modifier,
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        items(state.entries) { entry ->
+            val sourceText = if (entry.isFromEnglish) entry.englishText else entry.thaiText
+            val translatedText = if (entry.isFromEnglish) entry.thaiText else entry.englishText
+
+            TranslationEntryItem(
+                entry = entry,
+                onSpeakSource = {
+                    if (entry.isFromEnglish) onSpeakEnglish(sourceText)
+                    else onSpeakThai(sourceText)
+                },
+                onSpeakTranslation = {
+                    if (entry.isFromEnglish) onSpeakThai(translatedText)
+                    else onSpeakEnglish(translatedText)
+                },
+                onCopySource = {
+                    clipboardManager.setText(AnnotatedString(sourceText))
+                    copiedStates[sourceText] = true
+                },
+                onCopyTranslation = {
+                    clipboardManager.setText(AnnotatedString(translatedText))
+                    copiedStates[translatedText] = true
+                },
+                showCopiedSource = copiedStates[sourceText] == true,
+                showCopiedTranslation = copiedStates[translatedText] == true
+            )
+        }
+
+        if (state.interimText.isNotBlank()) {
+            item {
+                InterimBubble(
+                    text = state.interimText,
+                    isInputEnglish = state.isInputEnglish
+                )
+            }
+        }
+
+        if (state.streamingTranslation != null) {
+            item {
+                StreamingTranslationItem(
+                    sourceText = state.streamingTranslation.first,
+                    translatedText = state.streamingTranslation.second,
+                    isSourceEnglish = state.isInputEnglish,
+                    onSpeakSource = {
+                        if (state.isInputEnglish) onSpeakEnglish(state.streamingTranslation.first)
+                        else onSpeakThai(state.streamingTranslation.first)
+                    },
+                    onSpeakTranslation = {
+                        if (state.isInputEnglish) onSpeakThai(state.streamingTranslation.second)
+                        else onSpeakEnglish(state.streamingTranslation.second)
+                    },
+                    onCopySource = {
+                        clipboardManager.setText(AnnotatedString(state.streamingTranslation.first))
+                        copiedStates[state.streamingTranslation.first] = true
+                    },
+                    onCopyTranslation = {
+                        clipboardManager.setText(AnnotatedString(state.streamingTranslation.second))
+                        copiedStates[state.streamingTranslation.second] = true
+                    },
+                    showCopiedSource = copiedStates[state.streamingTranslation.first] == true,
+                    showCopiedTranslation = copiedStates[state.streamingTranslation.second] == true
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun InitialPlaceholder(text: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            color = TextSecondary,
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.bodyLarge
+        )
+    }
+} 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\ui\components\chat\InterimBubble.kt --- 
+package com.bwc.bluethai.ui.components.chat
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+
+@Composable
+fun InterimBubble(
+    text: String,
+    isInputEnglish: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = if (isInputEnglish) Arrangement.Start else Arrangement.End
+    ) {
+        ChatBubble(text = text, isEnglish = isInputEnglish, isInterim = true)
+    }
+} 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\ui\components\chat\StreamingTranslationItem.kt --- 
+package com.bwc.bluethai.ui.components.chat
+
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+
+@Composable
+fun StreamingTranslationItem(
+    sourceText: String,
+    translatedText: String,
+    isSourceEnglish: Boolean,
+    modifier: Modifier = Modifier,
+    onSpeakSource: (() -> Unit)? = null,
+    onSpeakTranslation: (() -> Unit)? = null,
+    onCopySource: (() -> Unit)? = null,
+    onCopyTranslation: (() -> Unit)? = null,
+    showCopiedSource: Boolean = false,
+    showCopiedTranslation: Boolean = false
+) {
+    Column(
+        horizontalAlignment = if (isSourceEnglish) Alignment.Start else Alignment.End,
+        modifier = modifier.fillMaxWidth()
+    ) {
+        ChatBubble(
+            text = sourceText,
+            isEnglish = isSourceEnglish,
+            onSpeakClick = onSpeakSource,
+            onCopyClick = onCopySource,
+            showCopiedIndicator = showCopiedSource
+        )
+        ChatBubble(
+            text = translatedText.ifBlank { "..." },
+            isEnglish = !isSourceEnglish,
+            modifier = Modifier.alpha(0.7f),
+            onSpeakClick = onSpeakTranslation,
+            onCopyClick = onCopyTranslation,
+            showCopiedIndicator = showCopiedTranslation
+        )
+    }
+} 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\ui\components\chat\TranslationEntryItem.kt --- 
+package com.bwc.bluethai.viewmodel
+
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import com.bwc.bluethai.data.model.ChatState
+import com.bwc.bluethai.ui.theme.BWCTranslatorTheme
+import com.bwc.bluethai.ui.components.chat.*
+
+@Composable
+fun TranslationEntryItem(
+    entry: ChatState.Entry,
+    modifier: Modifier = Modifier,
+    onSpeakSource: (() -> Unit)? = null,
+    onSpeakTranslation: (() -> Unit)? = null,
+    onCopySource: (() -> Unit)? = null,
+    onCopyTranslation: (() -> Unit)? = null,
+    showCopiedSource: Boolean = false,
+    showCopiedTranslation: Boolean = false
+) {
+    Column(
+        horizontalAlignment = if (entry.isFromEnglish) Alignment.Start else Alignment.End,
+        modifier = modifier.fillMaxWidth()
+    ) {
+        val sourceText = if (entry.isFromEnglish) entry.englishText else entry.thaiText
+        val translatedText = if (entry.isFromEnglish) entry.thaiText else entry.englishText
+
+        ChatBubble(
+            text = sourceText,
+            isEnglish = entry.isFromEnglish,
+            onSpeakClick = onSpeakSource,
+            onCopyClick = onCopySource,
+            showCopiedIndicator = showCopiedSource
+        )
+        ChatBubble(
+            text = translatedText,
+            isEnglish = !entry.isFromEnglish,
+            onSpeakClick = onSpeakTranslation,
+            onCopyClick = onCopyTranslation,
+            showCopiedIndicator = showCopiedTranslation
+        )
+    }
+}
+
+@Preview(showBackground = true, name = "From English")
+@Composable
+private fun TranslationEntryItemPreview_FromEnglish() {
+    BWCTranslatorTheme {
+        Surface(modifier = Modifier.padding(16.dp)) {
+            TranslationEntryItem(
+                entry = ChatState.Entry(
+                    id = 1,
+                    englishText = "This is a test message.",
+                    thaiText = "นี่คือข้อความทดสอบ",
+                    isFromEnglish = true
+                ),
+                onSpeakSource = {},
+                onSpeakTranslation = {},
+                onCopySource = {},
+                onCopyTranslation = {}
+            )
+        }
+    }
+}
+
+@Preview(showBackground = true, name = "From Thai")
+@Composable
+private fun TranslationEntryItemPreview_FromThai() {
+    BWCTranslatorTheme {
+        Surface(modifier = Modifier.padding(16.dp)) {
+            TranslationEntryItem(
+                entry = ChatState.Entry(
+                    id = 2,
+                    englishText = "How much is this?",
+                    thaiText = "อันนี้ราคาเท่าไหร่",
+                    isFromEnglish = false
+                ),
+                onSpeakSource = {},
+                onSpeakTranslation = {},
+                onCopySource = {},
+                onCopyTranslation = {}
+            )
+        }
+    }
+} 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\ui\screens\DebugLogScreen.kt --- 
+package com.bwc.bluethai.ui.screens
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import java.io.File
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.room.Index
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DebugLogScreen(
+    logs: List<String>,
+    onNavigateBack: () -> Unit,
+    onExportLogs: () -> Unit = {}
+) {
+    val context = LocalContext.current
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Debug Logs") },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                }
+            )
+        },
+        bottomBar = {
+            Button(
+                onClick = onExportLogs,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
+                Text("Export Logs")
+            }
+        }
+    ) { paddingValues ->
+        LazyColumn(
+            modifier = Modifier
+                .padding(paddingValues)
+                .fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(logs.size) { Index ->
+                Card {
+                    Text(
+                        text = logs[Index],
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                    )
+                }
+            }
+        }
+    }
+} 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\ui\screens\SettingsScreen.kt --- 
+
+package com.bwc.bluethai.ui.screens
+/** LOgs not capturing what we need -- API Key Selector still wrong, still getting asterisks on the screen */
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
+import com.bwc.bluethai.viewmodel.ModelSelectionState
+import kotlin.math.roundToInt
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsScreen(
+    availableKeys: Map<String, String>,
+    currentKeyName: String,
+    onApiKeySelected: (String) -> Unit,
+    currentFontSize: Int,
+    onFontSizeChange: (Int) -> Unit,
+    useCustomPrompt: Boolean,
+    onUseCustomPromptChange: (Boolean) -> Unit,
+    modelSelection: ModelSelectionState,
+    onModelSelectionChange: (ModelSelectionState) -> Unit,
+    onNavigateToDebugLogs: () -> Unit,
+    onNavigateToHistory: () -> Unit,
+    onNavigateBack: () -> Unit,
+    onBackupDatabase: () -> Unit
+
+) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Settings") },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                }
+            )
+        }
+    ) { paddingValues ->
+        LazyColumn(
+            modifier = Modifier
+                .padding(paddingValues)
+                .fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(24.dp)
+        ) {
+            // API Key Slider
+            item {
+                Column {
+                    val keyNames = availableKeys.keys.toList()
+                    val currentIndex = keyNames.indexOf(currentKeyName)
+                    Text("API Key: $currentKeyName", style = MaterialTheme.typography.titleMedium)
+                    Slider(
+                        value = currentIndex.toFloat(),
+                        onValueChange = { onApiKeySelected(keyNames[it.roundToInt()]) },
+                        valueRange = 0f..(keyNames.size - 1).toFloat(),
+                        steps = keyNames.size - 2
+                    )
+                }
+            }
+
+            // Model Selector
+            item {
+                Column {
+                    Text("Model: ${modelSelection.getModelName()}", style = MaterialTheme.typography.titleMedium)
+                    // Version Slider
+                    val versionIndex = when(modelSelection.version) {
+                        1.5f -> 0
+                        2.0f -> 1
+                        else -> 2 // 2.5f
+                    }
+                    Slider(
+                        value = versionIndex.toFloat(),
+                        onValueChange = {
+                            val newVersion = when(it.roundToInt()) {
+                                0 -> 1.5f
+                                1 -> 2.0f
+                                else -> 2.5f
+                            }
+                            onModelSelectionChange(modelSelection.copy(version = newVersion))
+                        },
+                        valueRange = 0f..2f,
+                        steps = 1
+                    )
+                    // Pro/Flash Toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Text("Flash")
+                        Switch(
+                            checked = modelSelection.isPro,
+                            onCheckedChange = { onModelSelectionChange(modelSelection.copy(isPro = it)) },
+                            modifier = Modifier.padding(horizontal = 8.dp)
+                        )
+                        Text("Pro")
+                    }
+                }
+            }
+
+            // Font Size Slider
+            item {
+                Column {
+                    Text("Font Size: ${currentFontSize}sp", style = MaterialTheme.typography.titleMedium)
+                    Slider(
+                        value = currentFontSize.toFloat(),
+                        onValueChange = { onFontSizeChange(it.roundToInt()) },
+                        valueRange = 14f..28f,
+                        steps = 6
+                    )
+                }
+            }
+
+            // Custom Prompt Toggle
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
+                        Text("Use Debug Prompt")
+                        Text("Translates like a pirate", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Switch(
+                        checked = useCustomPrompt,
+                        onCheckedChange = onUseCustomPromptChange
+                    )
+                }
+            }
+
+            // Navigation Links
+            item {
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            }
+            item {
+                SettingsNavigationItem(
+                    icon = Icons.Default.History,
+                    text = "Conversation History",
+                    onClick = onNavigateToHistory
+                )
+            }
+            item {
+                SettingsNavigationItem(
+                    icon = Icons.Default.BugReport,
+                    text = "View Raw Debug Logs",
+                    onClick = onNavigateToDebugLogs
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsNavigationItem(
+    icon: ImageVector,
+    text: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.padding(end = 16.dp))
+        Text(text)
+    }
+} 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\ui\screens\TranslatorScreen.kt --- 
+package com.bwc.bluethai.ui.screens
+
+import android.Manifest
+import android.widget.Toast
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Scaffold
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.bwc.bluethai.data.model.ChatState
+import com.bwc.bluethai.data.model.ConversationSession
+import com.bwc.bluethai.data.model.SessionPreview
+import com.bwc.bluethai.ui.components.ControlsBar
+import com.bwc.bluethai.ui.components.HistoryDialog
+import com.bwc.bluethai.ui.components.chat.ChatList
+import com.bwc.bluethai.ui.components.chat.InitialPlaceholder
+import com.bwc.bluethai.ui.theme.BWCTranslatorTheme
+import com.bwc.bluethai.viewmodel.InputMode
+import com.bwc.bluethai.viewmodel.ModelSelectionState
+import com.bwc.bluethai.viewmodel.TranslatorUiState
+import com.bwc.bluethai.viewmodel.TranslatorViewModel
+import com.bwc.bluethai.viewmodel.availableApiKeys // Import availableApiKeys
+import com.google.accompanist.permissions.ExperimentalPermissionsApi
+import com.google.accompanist.permissions.isGranted
+import com.google.accompanist.permissions.rememberPermissionState
+import java.util.Date
+
+// Define the possible screens
+enum class AppScreen {
+    Translator, Settings
+}
+
+@OptIn(ExperimentalPermissionsApi::class)
+@Composable
+fun TranslatorScreen(
+    viewModel: TranslatorViewModel = viewModel(),
+) {
+    val context = LocalContext.current
+    val uiState by viewModel.uiState.collectAsState()
+    val recordAudioPermission = rememberPermissionState(Manifest.permission.RECORD_AUDIO)
+
+    val successState = uiState as? TranslatorUiState.Success
+    LaunchedEffect(successState?.error) {
+        successState?.error?.let {
+            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+            viewModel.clearError()
+        }
+    }
+
+    var currentScreen by remember { mutableStateOf(AppScreen.Translator) }
+
+    val showHistoryDialog by viewModel.showHistoryDialog.collectAsState()
+    // Only show history dialog if we are on the Translator screen AND the dialog is requested
+    val shouldShowHistory = showHistoryDialog && currentScreen == AppScreen.Translator
+
+    if (shouldShowHistory) {
+        HistoryDialog(
+            sessions = successState?.sessions ?: emptyList(),
+            onDismiss = { viewModel.toggleHistoryDialog(false) },
+            onSessionClick = { sessionId ->
+                viewModel.loadSession(sessionId)
+                currentScreen = AppScreen.Translator // Ensure we are back to translator after load
+            },
+            onDeleteClick = { sessionId -> viewModel.deleteSession(sessionId) },
+            onNewChatClick = {
+                viewModel.startNewSession()
+                currentScreen = AppScreen.Translator // Ensure we are back to translator after new chat
+            }
+        )
+    }
+
+    when (currentScreen) {
+        AppScreen.Translator -> {
+            TranslatorScreenContent(
+                uiState = uiState,
+                isMicEnabled = recordAudioPermission.status.isGranted,
+                isPlaybackEnabled = successState?.isPlaybackEnabled ?: false,
+                // showHistoryDialog is handled by the parent now, not passed down
+                // onHistoryClick is handled by the ControlsBar's settings button in this model
+                // onDismissHistory, onSessionClick, onDeleteSession, onNewChatClick are for the HistoryDialog itself,
+                // and are handled when shouldShowHistory is true above.
+                onMicPress = {
+                    if (recordAudioPermission.status.isGranted) {
+                        viewModel.startListening()
+                    } else {
+                        recordAudioPermission.launchPermissionRequest()
+                    }
+                },
+                onMicRelease = { viewModel.stopListening() },
+                onMicClick = {
+                    if (recordAudioPermission.status.isGranted) {
+                        viewModel.toggleListening()
+                    } else {
+                        recordAudioPermission.launchPermissionRequest()
+                    }
+                },
+                onPlaybackChange = { viewModel.setPlaybackEnabled(it) },
+                onSwapLanguage = { viewModel.swapLanguage() },
+                onModeChange = { viewModel.setInputMode(it) },
+                // This lambda now navigates to the Settings screen
+                onSettingsClick = { currentScreen = AppScreen.Settings },
+                // This lambda is for the history icon, which we are not using directly in ControlsBar anymore
+                // We trigger history from the Settings screen's "Conversation History" item.
+                // onHistoryClick = { viewModel.toggleHistoryDialog(true) } // Removed this as it's handled in Settings
+
+                // These callbacks are for the HistoryDialog, which is handled by the parent `when` block.
+                // They are not needed as parameters here.
+                // onDismissHistory = { viewModel.toggleHistoryDialog(false) },
+                // onSessionClick = { viewModel.loadSession(it) },
+                // onDeleteSession = { viewModel.deleteSession(it) },
+                // onNewChatClick = { viewModel.startNewSession() },
+
+                onSpeakEnglish = { text -> viewModel.speak(text, isEnglish = true) },
+                onSpeakThai = { text -> viewModel.speak(text, isEnglish = false) },
+                //onBackupDatabase = { currentScreen = AppScreen.Settings}
+            )
+
+        }
+        AppScreen.Settings -> {
+            SettingsScreen(
+                availableKeys = availableApiKeys.keys.associateWith { availableApiKeys[it] ?: "" },
+                currentKeyName = successState?.currentApiKeyName ?: "Key 1",
+                onApiKeySelected = { viewModel.setApiKey(it) },
+                currentFontSize = successState?.baseFontSize ?: 18,
+                onFontSizeChange = { viewModel.setFontSize(it) },
+                useCustomPrompt = successState?.useCustomPrompt ?: false,
+                onUseCustomPromptChange = { viewModel.setUseCustomPrompt(it) },
+                modelSelection = successState?.modelSelection ?: ModelSelectionState(),
+                onModelSelectionChange = { viewModel.updateModelSelection(it) },
+                onNavigateToDebugLogs = { /* Handle navigation to DebugLogScreen if needed */ },
+                onNavigateToHistory = { viewModel.toggleHistoryDialog(true) }, // This will show history from Settings
+                onNavigateBack = { currentScreen = AppScreen.Translator }, // Navigate back to Translator
+                onBackupDatabase = {viewModel.backupDatabase(context)}
+            )
+        }
+    }
+}
+
+@Composable
+fun TranslatorScreenContent(
+    uiState: TranslatorUiState,
+    isMicEnabled: Boolean,
+    isPlaybackEnabled: Boolean,
+    onPlaybackChange: (Boolean) -> Unit,
+    onMicPress: () -> Unit,
+    onMicRelease: () -> Unit,
+    onMicClick: () -> Unit,
+    onSwapLanguage: () -> Unit,
+    onModeChange: (InputMode) -> Unit,
+    onSettingsClick: () -> Unit,
+    onSpeakEnglish: (String) -> Unit,
+    onSpeakThai: (String) -> Unit,
+
+) {
+    val successState = uiState as? TranslatorUiState.Success
+
+    // The HistoryDialog is now controlled by the parent TranslatorScreen using 'shouldShowHistory'
+    // so we remove the 'if (showHistoryDialog)' block here.
+
+    Scaffold(
+        bottomBar = {
+            if (successState != null) {
+                ControlsBar(
+                    isListening = successState.isListening,
+                    isInputEnglish = successState.isInputEnglish,
+                    inputMode = successState.inputMode,
+                    isMicEnabled = isMicEnabled,
+                    isPlaybackEnabled = isPlaybackEnabled,
+                    onMicPress = onMicPress,
+                    onMicRelease = onMicRelease,
+                    onMicClick = onMicClick,
+                    onSwapLanguage = onSwapLanguage,
+                    onModeChange = onModeChange,
+                    onSettingsClick = onSettingsClick,
+                    onPlaybackChange = onPlaybackChange
+                )
+            }
+        }
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+        ) {
+            when (val state = uiState) {
+                is TranslatorUiState.Loading -> {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        InitialPlaceholder(text = "Loading session...")
+                    }
+                }
+                is TranslatorUiState.Success -> {
+                    if (state.currentEntries.isEmpty() && state.interimText.isEmpty() && state.streamingTranslation == null) {
+                        InitialPlaceholder(text = "Tap or hold the mic to start.")
+                    } else {
+                        val chatState = ChatState(
+                            entries = state.currentEntries.map { entry ->
+                                ChatState.Entry(
+                                    id = entry.id,
+                                    englishText = entry.englishText,
+                                    thaiText = entry.thaiText,
+                                    isFromEnglish = entry.isFromEnglish
+                                )
+                            },
+                            interimText = state.interimText,
+                            isInputEnglish = state.isInputEnglish,
+                            streamingTranslation = state.streamingTranslation
+                        )
+                        ChatList(
+                            state = chatState,
+                            onSpeakEnglish = onSpeakEnglish,
+                            onSpeakThai = onSpeakThai
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Preview(showBackground = true, name = "Screen - Empty State")
+@Composable
+fun TranslatorScreenPreview_Empty() {
+    val emptyState = TranslatorUiState.Success(
+        currentEntries = emptyList(),
+        sessions = listOf(
+            SessionPreview(
+                session = ConversationSession(1L, Date()),
+                previewText = "Previous chat..."
+            )
+        )
+    )
+    BWCTranslatorTheme {
+        // Pass dummy lambdas for the new parameters and remove the ones that are no longer needed
+        TranslatorScreenContent(
+            uiState = emptyState,
+            isMicEnabled = true,
+            isPlaybackEnabled = true,
+            onPlaybackChange = {},
+            onMicPress = {},
+            onMicRelease = {},
+            onMicClick = {},
+            onSwapLanguage = {},
+            onModeChange = {},
+            onSpeakEnglish = {},
+            onSpeakThai = {},
+            onSettingsClick = {},
+             //onBackupDatabase = {}
+        )
+    }
+} 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\ui\theme\Color.kt --- 
+package com.bwc.bluethai.ui.theme
+
+import androidx.compose.ui.graphics.Color
+
+val BgDark = Color(0xFF111827)
+val BgLight = Color(0xFF1F2937)
+val BorderColor = Color(0xFF374151)
+val TextPrimary = Color(0xFFF3F4F6)
+val TextSecondary = Color(0xFF9CA3AF)
+
+val BubbleEnBg = Color(0xFF374151)
+val BubbleThBg = Color(0xFF1E40AF) // Darker blue
+
+val MicButton = Color(0xFF4F46E5)
+val MicButtonListening = Color(0xFFEA580C)
+val MicButtonDisabled = Color(0xFF374151) 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\ui\theme\DynamicTypography.kt --- 
+package com.bwc.bluethai.ui.theme
+
+import androidx.compose.material3.Typography
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+
+// This function creates a Typography object with a dynamic base size
+fun getDynamicTypography(baseSize: Int): Typography {
+    return Typography(
+        bodyLarge = TextStyle(
+            fontFamily = Inter,
+            fontWeight = FontWeight.Normal,
+            fontSize = baseSize.sp,
+            lineHeight = (baseSize + 8).sp,
+            letterSpacing = 0.5.sp
+        ),
+        headlineSmall = TextStyle(
+            fontFamily = Inter,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = (baseSize + 8).sp,
+        ),
+        titleMedium = TextStyle(
+            fontFamily = Inter,
+            fontWeight = FontWeight.Medium,
+            fontSize = (baseSize + 2).sp,
+        )
+        // Define other styles as needed based on the baseSize
+    )
+} 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\ui\theme\Theme.kt --- 
+package com.bwc.bluethai.ui.theme
+
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Typography
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalView
+
+
+private val DarkColorScheme = darkColorScheme(
+    primary = MicButton,
+    background = BgLight,
+    surface = BgDark,
+    onPrimary = TextPrimary,
+    onBackground = TextPrimary,
+    onSurface = TextPrimary,
+    secondary = TextSecondary
+)
+
+@Composable
+fun BWCTranslatorTheme(
+    // The theme now accepts a Typography object to allow for dynamic font sizes
+    typography: Typography = getDynamicTypography(18),
+    content: @Composable () -> Unit
+) {
+    val colorScheme = DarkColorScheme // Force dark theme for this app
+    val view = LocalView.current
+
+    /*
+    // We are letting the XML theme handle this automatically now.
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = (view.context as Activity).window
+            window.statusBarColor = colorScheme.surface.toArgb()
+            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = false
+        }
+    }
+    */
+
+    MaterialTheme(
+        colorScheme = colorScheme,
+        typography = typography, // Use the typography passed into the function
+        content = content
+    )
+}
+ 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\ui\theme\Type.kt --- 
+package com.bwc.bluethai.ui.theme
+
+import androidx.compose.material3.Typography
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import com.bwc.bluethai.R
+
+// Note: Ensure you have the corresponding font files in the res/font directory.
+val Inter = FontFamily(
+    Font(R.font.inter_regular, FontWeight.Normal),
+    Font(R.font.inter_medium, FontWeight.Medium),
+    Font(R.font.inter_semibold, FontWeight.SemiBold),
+    Font(R.font.inter_bold, FontWeight.Bold)
+)
+
+val Sarabun = FontFamily(
+    Font(R.font.sarabun_regular, FontWeight.Normal),
+    Font(R.font.sarabun_medium, FontWeight.Medium),
+    Font(R.font.sarabun_bold, FontWeight.Bold)
+)
+
+// Typography definitions with slightly increased font sizes
+val Typography = Typography(
+    bodyLarge = TextStyle(
+        fontFamily = Inter,
+        fontWeight = FontWeight.Normal,
+        fontSize = 18.sp, // Increased from 16.sp
+        lineHeight = 26.sp, // Increased from 24.sp
+        letterSpacing = 0.5.sp
+    ),
+    // You might want to adjust other text styles here as well
+    headlineSmall = TextStyle(
+        fontFamily = Inter,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 26.sp // Example of increasing another style
+    )
+) 
+--- File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\viewmodel\TranslatorViewModel.kt --- 
+// File: D:\ANDROID\Projects\app\src\main\java\com\bwc\bluethai\viewmodel\TranslatorViewModel.kt
+
+package com.bwc.bluethai.viewmodel
+
+import android.app.Application
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import com.bwc.bluethai.BuildConfig
+import com.bwc.bluethai.data.model.SessionPreview
+import com.bwc.bluethai.data.model.TranslationEntry
+import com.bwc.bluethai.data.repository.TranslationRepository
+import com.bwc.bluethai.services.RecognitionState
+import com.bwc.bluethai.services.SpeechRecognizerService
+import com.bwc.bluethai.services.TextToSpeechService
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlinx.coroutines.flow.first
+import com.bwc.bluethai.data.local.AppDatabase
+import android.content.Context
+import android.net.Uri
+import android.util.Log // Import Log
+import androidx.core.content.FileProvider
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.FileInputStream
+import java.nio.channels.FileChannel
+
+val availableApiKeys = mapOf(
+    "Key 1" to BuildConfig.GEMINI_API_KEY,
+    "Key 2" to BuildConfig.GEMINI_API_KEY_DEBUG_1,
+    "Key 3" to BuildConfig.GEMINI_API_KEY_DEBUG_2,
+    "Key 4" to BuildConfig.GEMINI_API_KEY_DEBUG_3
+)
+
+data class ModelSelectionState(
+    val version: Float = 1.5f,
+    val isPro: Boolean = false
+) {
+    fun getModelName(): String {
+        val type = if (isPro) "pro" else "flash"
+        return "gemini-$version-$type"
+    }
+}
+
+enum class InputMode { HOLD, TAP }
+
+sealed class TranslatorUiState {
+    data object Loading : TranslatorUiState()
+    data class Success(
+        val baseFontSize: Int = 18,
+        val currentApiKeyName: String = "Key 1",
+        val currentEntries: List<TranslationEntry> = emptyList(),
+        val currentSessionId: Long? = null,
+        val debugLogs: List<String> = emptyList(),
+        val error: String? = null,
+        val inputMode: InputMode = InputMode.HOLD,
+        val interimText: String = "",
+        val isInputEnglish: Boolean = true,
+        val isListening: Boolean = false,
+        val isPlaybackEnabled: Boolean = true,
+        val modelSelection: ModelSelectionState = ModelSelectionState(),
+        val sessions: List<SessionPreview> = emptyList(),
+        val streamingTranslation: Pair<String, String>? = null,
+        val useCustomPrompt: Boolean = false,
+        // ADD THIS LINE:
+        val showSettingsDialog: Boolean = false
+    ) : TranslatorUiState()
+
+
+}
+
+
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class TranslatorViewModel(application: Application) : ViewModel() {
+
+    private val repository = TranslationRepository(application)
+    private val speechRecognizer = SpeechRecognizerService(application)
+    private val textToSpeech = TextToSpeechService(application) { isSuccess ->
+        // Can handle TTS init status if needed
+    }
+
+    private val _showHistoryDialog = MutableStateFlow(false)
+    val showHistoryDialog: StateFlow<Boolean> = _showHistoryDialog.asStateFlow()
+
+    private val logFileName = "app_logs.txt"
+    private val logFile: File by lazy { File(application.applicationContext.filesDir, logFileName) }
+
+    // Database instance
+    private val appDatabase: AppDatabase by lazy { AppDatabase.getDatabase(application) }
+    private val databaseName = "translator_database"  // Your database name
+
+
+    // Use TranslatorUiState.Success directly as the internal state holder.
+    private val _internalState = MutableStateFlow(TranslatorUiState.Success())
+    private val _currentSessionId = MutableStateFlow<Long?>(null)
+    private var translationJob: Job? = null
+
+    // This flow reactively provides the entries for the currently selected session
+    private val entriesForCurrentSession: StateFlow<List<TranslationEntry>> = _currentSessionId
+        .filterNotNull()
+        .flatMapLatest { sessionId ->
+            repository.getEntriesForSession(sessionId)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // This flow reactively provides all sessions with their text previews for the history dialog
+    private val sessionsWithPreviews: StateFlow<List<SessionPreview>> =
+        repository.getSessionsWithPreviews()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // The final UI state is a combination of all our reactive streams
+    val uiState: StateFlow<TranslatorUiState> = combine(
+        _internalState,
+        _currentSessionId,
+        entriesForCurrentSession,
+        sessionsWithPreviews
+    ) { internalState, sessionId, entries, sessions ->
+        // The internal state holds the base UI settings, combine enriches it with data from other flows.
+        internalState.copy(
+            currentSessionId = sessionId,
+            currentEntries = entries,
+            sessions = sessions,
+            debugLogs = getLogsFromFile()
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = TranslatorUiState.Loading
+    )
+
+    // These are correct.
+    // private val _showHistoryDialog = MutableStateFlow(false)
+    // val showHistoryDialog: StateFlow<Boolean> = _showHistoryDialog.asStateFlow()
+
+    private val _showSettingsDialog = MutableStateFlow(false)
+    val showSettingsDialog: StateFlow<Boolean> = _showSettingsDialog.asStateFlow()
+
+    // The private SuccessState data class is now removed.
+
+    init {
+        // Handle speech recognition states
+        viewModelScope.launch {
+            speechRecognizer.recognitionState.collect { state ->
+                handleRecognitionState(state)
+            }
+        }
+        // Determine the initial session to load
+        viewModelScope.launch {
+            val sessions = repository.getAllSessions().first()
+            if(sessions.isEmpty()) {
+                startNewSession()
+            } else {
+                loadSession(sessions.first().id)
+            }
+        }
+    }
+
+    private fun handleRecognitionState(state: RecognitionState) {
+        _internalState.update {
+            when (state) {
+                is RecognitionState.Listening -> it.copy(isListening = true, interimText = "")
+                is RecognitionState.Idle -> it.copy(isListening = false)
+                is RecognitionState.PartialResult -> it.copy(interimText = state.text)
+                is RecognitionState.FinalResult -> {
+                    if (state.text.isNotBlank()) {
+                        processFinalTranscript(state.text)
+                    }
+                    it.copy(isListening = false, interimText = "")
+                }
+                is RecognitionState.Error -> it.copy(error = state.message, isListening = false)
+            }
+        }
+    }
+
+    private fun processFinalTranscript(text: String) {
+        translationJob?.cancel()
+        translationJob = viewModelScope.launch(Dispatchers.IO) {  // Run on background thread
+            val currentState = _internalState.value
+            val sourceText = text
+            var translatedText = ""
+
+            _internalState.update { it.copy(streamingTranslation = sourceText to "") }
+
+            try {
+
+                // Perform the translation
+                repository.translateText(text).collect { streamedText ->
+                    translatedText = streamedText
+                    _internalState.update { it.copy(streamingTranslation = sourceText to translatedText) }
+                }
+
+                // Save the completed entry
+                val sessionId = _currentSessionId.value ?: return@launch
+                val newEntry = TranslationEntry(
+                    sessionId = sessionId,
+                    englishText = if (currentState.isInputEnglish) sourceText else translatedText,
+                    thaiText = if (currentState.isInputEnglish) translatedText else sourceText,
+                    isFromEnglish = currentState.isInputEnglish
+                )
+                withContext(Dispatchers.IO) {  // Run DB operation on IO thread
+                    repository.saveTranslationEntry(newEntry)
+                }
+
+
+                // Speak the result if enabled
+                if (currentState.isPlaybackEnabled) {
+                    speak(translatedText, !currentState.isInputEnglish)
+                }
+
+            } catch (e: Exception) {
+                _internalState.update { it.copy(error = "Translation failed: ${e.message}") }
+            } finally {
+                // Always clear the streaming state, whether it succeeded or failed
+                _internalState.update { it.copy(streamingTranslation = null) }
+            }
+        }
+    }
+
+    // --- Public actions from UI ---
+
+    // --- State Management ---
+
+    fun setInputMode(mode: InputMode)  {
+        Log.i("AppLog", "setInputMode: $mode")
+        _internalState.update { it.copy(inputMode = mode) }
+    }
+
+
+    fun swapLanguage()  {
+        Log.i("AppLog", "swapLanguage")
+        _internalState.update { it.copy(isInputEnglish = !it.isInputEnglish) }
+    }
+
+
+    fun clearError()  {
+        Log.i("AppLog", "clearError")
+        _internalState.update { it.copy(error = null) }
+    }
+
+
+    fun setFontSize(size: Int)  {
+        Log.i("AppLog", "setFontSize: $size")
+        _internalState.update { it.copy(baseFontSize = size) }
+    }
+
+
+    fun setPlaybackEnabled(isEnabled: Boolean)  {
+        Log.i("AppLog", "setPlaybackEnabled: $isEnabled")
+        _internalState.update { it.copy(isPlaybackEnabled = isEnabled) }
+    }
+
+
+    fun setApiKey(keyName: String)  {
+        Log.i("AppLog", "setApiKey: $keyName")
+        repository.reinitializeModel(
+            apiKey = availableApiKeys[keyName] ?: "",
+            modelName = _internalState.value.modelSelection.getModelName(),
+            systemInstruction = if (_internalState.value.useCustomPrompt) TranslationRepository.PIRATE_PROMPT_TO_THAI else TranslationRepository.PATTAYA_PROMPT_TO_THAI
+        )
+        _internalState.update { it.copy(currentApiKeyName = keyName) }
+    }
+
+
+    fun setUseCustomPrompt(useCustom: Boolean)  {
+        Log.i("AppLog", "setUseCustomPrompt: $useCustom")
+        repository.reinitializeModel(
+            apiKey = availableApiKeys[_internalState.value.currentApiKeyName] ?: "",
+            modelName = _internalState.value.modelSelection.getModelName(),
+            systemInstruction = if (useCustom) TranslationRepository.PIRATE_PROMPT_TO_THAI else TranslationRepository.PATTAYA_PROMPT_TO_THAI
+        )
+        _internalState.update { it.copy(useCustomPrompt = useCustom) }
+    }
+
+
+    fun updateModelSelection(newSelection: ModelSelectionState)  {
+        Log.i("AppLog", "updateModelSelection: $newSelection")
+        repository.reinitializeModel(
+            apiKey = availableApiKeys[_internalState.value.currentApiKeyName] ?: "",
+            modelName = newSelection.getModelName(),
+            systemInstruction = if (_internalState.value.useCustomPrompt) TranslationRepository.PIRATE_PROMPT_TO_THAI else TranslationRepository.PATTAYA_PROMPT_TO_THAI
+        )
+        _internalState.update { it.copy(modelSelection = newSelection) }
+    }
+
+
+
+    // --- Speech Handling ---
+
+
+    fun startListening()  {
+        Log.i("AppLog", "startListening")
+        speechRecognizer.startListening(_internalState.value.isInputEnglish)
+    }
+
+
+    fun stopListening()  {
+        Log.i("AppLog", "stopListening")
+        speechRecognizer.stopListening()
+    }
+
+
+    fun toggleListening()  {
+        Log.i("AppLog", "toggleListening")
+        if (_internalState.value.isListening) stopListening() else startListening()
+    }
+
+
+    fun speak(text: String, isEnglish: Boolean)  {
+        Log.i("AppLog", "speak: text=$text, isEnglish=$isEnglish")
+        if (_internalState.value.isPlaybackEnabled) {
+            textToSpeech.speak(text, isEnglish)
+        }
+    }
+
+
+    // --- Session Management ---
+
+
+    fun toggleHistoryDialog(show: Boolean)  {
+        Log.i("AppLog", "toggleHistoryDialog: $show")
+        _showHistoryDialog.value = show
+    }
+
+
+    fun loadSession(sessionId: Long)  {
+        Log.i("AppLog", "loadSession: $sessionId")
+        _currentSessionId.value = sessionId
+        toggleHistoryDialog(false)
+    }
+
+
+    fun toggleSettingsDialog(show: Boolean)  {
+        Log.i("AppLog", "toggleSettingsDialog: $show")
+        _showSettingsDialog.value = show
+    }
+
+
+    fun startNewSession()  {
+        Log.i("AppLog", "startNewSession")
+        viewModelScope.launch {
+            val newId = withContext(Dispatchers.IO) { // Run DB operation on IO thread
+                repository.startNewSession()
+            }
+            _currentSessionId.value = newId
+            toggleHistoryDialog(false)
+        }
+    }
+
+
+    fun deleteSession(sessionId: Long)  {
+        Log.i("AppLog", "deleteSession: $sessionId")
+        viewModelScope.launch {
+            if (_currentSessionId.value == sessionId) {
+                val sessionsAfterDeletion = repository.getAllSessions().first().filter { it.id != sessionId }
+                if (sessionsAfterDeletion.isNotEmpty()) {
+                    loadSession(sessionsAfterDeletion.first().id)
+                } else {
+                    startNewSession()
+                }
+            }
+            withContext(Dispatchers.IO) { // Run DB operation on IO thread
+                repository.deleteSession(sessionId)
+            }
+
+        }
+    }
+
+
+    // Custom Logging Function
+    private fun logToFile(message: String) {
+        viewModelScope.launch {
+            val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+            val logEntry = "$timestamp: $message\n"
+
+            try {
+                FileOutputStream(logFile, true).bufferedWriter().use { writer ->
+                    writer.append(logEntry)
+                }
+                // Update the logs in the state
+                _internalState.update {
+                    it.copy(debugLogs = getLogsFromFile())
+                }
+
+
+                Log.d("AppLog", "Logged: $message")
+            } catch (e: IOException) {
+                Log.e("AppLog", "Failed to write to log file: ${e.message}")
+            }
+        }
+    }
+
+    // Retrieve Logs from File
+    private fun getLogsFromFile(): List<String> {
+        return try {
+            if (!logFile.exists()) {
+                return emptyList()
+            }
+            logFile.readLines()
+        } catch (e: IOException) {
+            Log.e("AppLog", "Failed to read from log file: ${e.message}")
+            emptyList()
+        }
+    }
+
+    // ADD the database backup call
+    fun backupDatabase(context: Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val dbFile = context.getDatabasePath(databaseName)
+                val backupDir = context.filesDir // Internal storage
+                val backupFile = File(backupDir, "translator_database_backup.db")
+
+                if (!dbFile.exists()) {
+                    logToFile("Database file not found.")
+                    return@launch
+                }
+
+                // Copy the database
+                copyFile(FileInputStream(dbFile).channel, FileOutputStream(backupFile).channel)
+                logToFile("Database backed up successfully to ${backupFile.absolutePath}")
+
+            } catch (e: Exception) {
+                logToFile("Database backup failed: ${e.message}")
+                Log.e("DatabaseBackup", "Error during backup", e)
+
+            }
+        }
+    }
+
+    // Helper function to copy file
+    @Throws(IOException::class)
+    private fun copyFile(source: FileChannel, destination: FileChannel) {
+        destination.transferFrom(source, 0, source.size())
+        source.close()
+        destination.close()
+    }
+
+    // --- Lifecycle and Factory ---
+
+    override fun onCleared() {
+        Log.i("AppLog", "onCleared called")
+        super.onCleared()
+        speechRecognizer.destroy()
+        textToSpeech.shutdown()
+    }
+
+    class TranslatorViewModelFactory(private val application: Application) : ViewModelProvider.Factory {
+        override fun <T : ViewModel> create(modelClass: Class<T>): T {
+            if (modelClass.isAssignableFrom(TranslatorViewModel::class.java)) {
+                @Suppress("UNCHECKED_CAST")
+                return TranslatorViewModel(application) as T
+            }
+            throw IllegalArgumentException("Unknown ViewModel class")
+        }
+    }
+} 

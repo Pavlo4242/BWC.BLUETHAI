@@ -1,4 +1,4 @@
-package com.bwc.translator.ui.components.chat
+package com.bwc.bluethai.ui.components.chat
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -13,16 +13,17 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.bwc.translator.data.model.ChatState
-import com.bwc.translator.ui.theme.TextSecondary
+import com.bwc.bluethai.data.model.ChatState
+import com.bwc.bluethai.ui.theme.TextSecondary
+import com.bwc.bluethai.viewmodel.TranslationEntryItem
 
 
 @Composable
 fun ChatList(
     state: ChatState,
     modifier: Modifier = Modifier,
-    onSpeakEnglish: (text: String) -> Unit = {},
-    onSpeakThai: (text: String) -> Unit = {}
+    onSpeakEnglish: (String) -> Unit = {},
+    onSpeakThai: (String) -> Unit = {}
 ) {
     val listState = rememberLazyListState()
     val clipboardManager = LocalClipboardManager.current

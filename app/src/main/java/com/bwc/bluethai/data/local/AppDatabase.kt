@@ -1,17 +1,26 @@
-package com.bwc.translator.data.local
+package com.bwc.bluethai.data.local
+
 
 import android.content.Context
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
-import com.bwc.translator.data.model.ConversationSession
-import com.bwc.translator.data.model.TranslationEntry
+import com.bwc.bluethai.data.model.ConversationSession
+import com.bwc.bluethai.data.model.TranslationEntry
 
-@Database(entities = [ConversationSession::class, TranslationEntry::class], version = 1, exportSchema = false)
+@Database(
+    entities = [
+        ConversationSession::class,
+        TranslationEntry::class
+    ],
+    version = 2,  // Roll back version since we're removing WebSocket tables
+    exportSchema = false
+)
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
-
     abstract fun sessionDao(): SessionDao
     abstract fun entryDao(): EntryDao
 
@@ -25,7 +34,9 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "translator_database"
-                ).build()
+                )
+                    .fallbackToDestructiveMigration() // Add this for now to handle version change
+                    .build()
                 INSTANCE = instance
                 instance
             }

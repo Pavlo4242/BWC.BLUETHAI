@@ -1,5 +1,7 @@
 import java.util.Properties
 import java.io.FileInputStream
+import com.android.build.api.artifact.SingleArtifact
+import com.android.build.api.variant.ApplicationAndroidComponentsExtension
 
 plugins {
     alias(libs.plugins.androidApplication)
@@ -8,23 +10,23 @@ plugins {
 }
 
 // Function to read the API key from local.properties
-fun getApiKey(): String {
+fun getApiKey(keyName: String): String {
     val properties = Properties()
     val localPropertiesFile = rootProject.file("local.properties")
     if (localPropertiesFile.exists()) {
         properties.load(FileInputStream(localPropertiesFile))
-        return properties.getProperty("GEMINI_API_KEY", "")
+        return properties.getProperty(keyName, "")
     }
     return ""
 }
 
 
 android {
-    namespace = "com.bwc.translator"
+    namespace = "com.bwc.bluethai"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.bwc.translator"
+        applicationId = "com.bwc.bluethai"
         minSdk = 26
         targetSdk = 34
         versionCode = 1
@@ -35,8 +37,13 @@ android {
             useSupportLibrary = true
         }
 
-        // Expose API Key to the app via BuildConfig
-        buildConfigField("String", "GEMINI_API_KEY", "\"${getApiKey()}\"")
+        // Expose all API Keys to the app via BuildConfig
+        // Expose all API Keys to the app via BuildConfig
+
+        buildConfigField("String", "GEMINI_API_KEY", "\"${getApiKey("GEMINI_API_KEY")}\"")
+        buildConfigField("String", "GEMINI_API_KEY_DEBUG_1", "\"${getApiKey("GEMINI_API_KEY_DEBUG_1")}\"")
+        buildConfigField("String", "GEMINI_API_KEY_DEBUG_2", "\"${getApiKey("GEMINI_API_KEY_DEBUG_2")}\"")
+        buildConfigField("String", "GEMINI_API_KEY_DEBUG_3", "\"${getApiKey("GEMINI_API_KEY_DEBUG_3")}\"") // Added Debug Key 3
     }
 
     buildTypes {
@@ -48,6 +55,7 @@ android {
             )
         }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -69,6 +77,30 @@ android {
     }
 }
 
+androidComponents {
+    onVariants { variant ->
+        // No change needed for this part
+        val apkDirectory = variant.artifacts.get(SingleArtifact.APK)
+        val outputDirectory = project.layout.buildDirectory.dir("renamed_apks/${variant.name}")
+
+        tasks.register("rename${variant.name.replaceFirstChar { it.uppercase() }}Apk", Copy::class.java) {
+            from(apkDirectory)
+            into(outputDirectory)
+
+            // Correct way to get the versionName
+            val versionName = variant.outputs.first().versionName.get()
+
+            // Construct the new file name using the retrieved versionName
+            val newName = "BWCTrans-${variant.buildType}-v${versionName}.apk"
+
+            rename {
+                newName
+            }
+        }
+    }
+}
+
+
 dependencies {
     // Core & UI
     implementation(libs.androidx.core.ktx)
@@ -80,6 +112,9 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     implementation("androidx.compose.material:material-icons-extended")
+    implementation("io.coil-kt:coil-compose:2.5.0")
+
+
     // Gemini AI
     implementation(libs.generativeai)
 

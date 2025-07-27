@@ -1,4 +1,4 @@
-package com.bwc.translator.ui.components
+package com.bwc.bluethai.ui.components
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -25,17 +25,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import com.bwc.translator.data.model.ConversationSession
-import com.bwc.translator.ui.theme.BubbleThBg
-import com.bwc.translator.ui.theme.TextSecondary
+import com.bwc.bluethai.data.model.ConversationSession
+import com.bwc.bluethai.data.model.SessionPreview
+import com.bwc.bluethai.ui.theme.BubbleThBg
+import com.bwc.bluethai.ui.theme.TextSecondary
 import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 @Composable
 fun HistoryDialog(
-    sessions: List<Pair<ConversationSession, String>>,
+    sessions: List<SessionPreview>,
     onDismiss: () -> Unit,
     onSessionClick: (Long) -> Unit,
     onDeleteClick: (Long) -> Unit,
@@ -58,12 +61,12 @@ fun HistoryDialog(
                     Text("No past conversations.", color = TextSecondary)
                 } else {
                     LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
-                        items(sessions, key = { it.first.id }) { (session, preview) ->
-                            HistoryItem(
-                                session = session,
-                                preview = preview,
-                                onClick = { onSessionClick(session.id) },
-                                onDelete = { onDeleteClick(session.id) }
+                        items(sessions) { sessionPreview ->
+                            com.bwc.bluethai.ui.components.HistoryItem(
+                                session = sessionPreview.session,
+                                preview = sessionPreview.previewText,
+                                onClick = { onSessionClick(sessionPreview.session.id) },
+                                onDelete = { onDeleteClick(sessionPreview.session.id) }
                             )
                         }
                     }
@@ -85,6 +88,36 @@ fun HistoryDialog(
         }
     }
 }
+
+@Preview
+@Composable
+fun HistoryDialogPreview() {
+    val sampleSessions = listOf(
+        SessionPreview(session = ConversationSession(id = 1L, startTime = Date()), previewText = "Hello, how are you?"),
+        SessionPreview(session = ConversationSession(id = 2L, startTime = Date()), previewText = "This is a longer conversation preview to test text overflow handling and make sure it looks good."),
+        SessionPreview(session = ConversationSession(id = 3L, startTime = Date()), previewText = "")
+    )
+    HistoryDialog(
+        sessions = sampleSessions,
+        onDismiss = {},
+        onSessionClick = {},
+        onDeleteClick = {},
+        onNewChatClick = {}
+    )
+}
+
+@Preview
+@Composable
+fun HistoryItemPreview() {
+    val session = ConversationSession(id = 1L, startTime = Date())
+    HistoryItem(
+        session = session,
+        preview = "This is a sample preview text.",
+        onClick = {},
+        onDelete = {}
+    )
+}
+
 
 @Composable
 private fun HistoryItem(session: ConversationSession, preview: String, onClick: () -> Unit, onDelete: () -> Unit) {

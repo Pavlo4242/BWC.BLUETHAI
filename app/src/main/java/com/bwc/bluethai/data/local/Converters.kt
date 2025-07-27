@@ -1,4 +1,4 @@
-package com.bwc.translator.data.local
+package com.bwc.bluethai.data.local
 
 import androidx.room.TypeConverter
 import java.util.Date

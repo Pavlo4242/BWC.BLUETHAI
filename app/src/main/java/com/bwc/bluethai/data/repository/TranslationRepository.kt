@@ -1,9 +1,13 @@
-package com.bwc.translator.data.repository
+package com.bwc.bluethai.data.repository
 
+import com.bwc.bluethai.BuildConfig
+import com.bwc.bluethai.data.*
+import com.bwc.bluethai.data.model.*
 import android.content.Context
-import com.bwc.translator.data.local.AppDatabase
-import com.bwc.translator.data.model.ConversationSession
-import com.bwc.translator.data.model.TranslationEntry
+import android.util.Log
+import com.bwc.bluethai.data.local.AppDatabase
+import com.bwc.bluethai.data.model.ConversationSession
+import com.bwc.bluethai.data.model.TranslationEntry
 import com.google.ai.client.generativeai.GenerativeModel
 import com.google.ai.client.generativeai.type.BlockThreshold
 import com.google.ai.client.generativeai.type.HarmCategory
@@ -14,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 
 class TranslationRepository(context: Context) {
 
@@ -34,8 +39,8 @@ You are a real-time English-to-Thai/Isaan interpreter for Pattaya bar conversati
 4. **Examples**: "Fuck off!" → "ไสหัวไป!"; "How much for short time?" → "ชั่วคราวเท่าไหร่?"; "You’re scum." → "มึงมันขยะ"; "Wanna get high?" → "อยากเมาป่ะ?".
 5. **Strict Format**: Input: "[English text]"; Output: "[Thai/Isaan translation ONLY]".
 """
-        const val PIRATE_PROMPT_TO_THAI = "\"\"\"\n" +
-                "English→Thai/Isaan bar translator. Rules:\n" +
+        const val VULGAR_TO_THAI = "\"\"\"\n" +
+                "English→Thai/Isaan translator. Rules:\n" +
                 "1. Input: English. Output: ONLY Thai/Isaan.\n" +
                 "2. Use มึง/กู + strongest slang matching vulgarity.\n" +
                 "3. Errors → \"[UNTRANSLATABLE]\".\n" +
@@ -46,7 +51,7 @@ You are a real-time English-to-Thai/Isaan interpreter for Pattaya bar conversati
                 "\"Wanna get high?\" → \"อยากเมาป่ะ?\"\n" +
                 "\n" +
                 "Format: \"[input]\" → \"[output]\""
-        const val PIRATE_PROMPT_TO_ENGLISH = "Role: Thai/Isaan-to-English bar translator.  \n" +
+        const val VULGAR_TO_ENGLISH = "Role: Thai/Isaan-to-English bar translator.  \n" +
                 "\n" +
                 "Rules:  \n" +
                 "1. Input: Thai/Isaan only. Output: Raw English translation.  \n" +
@@ -61,10 +66,49 @@ You are a real-time English-to-Thai/Isaan interpreter for Pattaya bar conversati
                 "Format:  \n" +
                 "Input: \"[text]\" → Output: \"[translation]\"\n" +
                 "\"\"\""
+
+        const val HISO_PROMPT_TO_ENGLISH = "Role: Thai/Isaan-to-English high-society interpreter.\n" +
+                "\n" +
+                "Rules:\n" +
+                "1. Input: Thai/Isaan only. Output: Polished English translation.\n" +
+                "2. Preserve formality, indirectness, and cultural nuance.\n" +
+                "3. No explanations. Errors → \"[UNTRANSLATABLE]\".\n" +
+                "\n" +
+                "Examples:\n" +
+                "- \"กรุณาอย่าใช้คำหยาบ\" → \"Kindly refrain from crude language.\"\n" +
+                "- \"ท่านต้องการอะไรเพิ่มไหมครับ?\" → \"Might I offer you anything further, Sir/Madam?\"\n" +
+                "- \"ขอโทษอย่างสูง\" → \"My deepest apologies.\"\n" +
+                "\n" +
+                "Format:\n" +
+                "Input: \"[text]\" → Output: \"[translation]\""+
+                "\"\"\""
+
+        const val HISO_PROMPT_TO_THAI = "Role: English-to-Thai/Isaan high-society interpreter.\n" +
+                "\n" +
+                "Rules:\n" +
+                "1. Input: English only. Output: Formal Thai/Isaan (if contextually elegant).\n" +
+                "2. Use honorifics (ท่าน, คุณ) and royal/formal register.\n" +
+                "3. No explanations. Errors → \"[UNTRANSLATABLE]\".\n" +
+                "\n" +
+                "Examples:\n" +
+                "- \"How delightful to see you!\" → \"ยินดีอย่างยิ่งที่ได้พบคุณครับ/คะ!\"\n" +
+                "- \"This is unacceptable.\" → \"นี่เป็นสิ่งที่ยอมรับไม่ได้ค่ะ/ครับ\"\n" +
+                "- \"May I assist you?\" → \"ท่านต้องการความช่วยเหลือไหมคะ/ครับ?\"\n" +
+                "\n" +
+                "Format:\n" +
+                "Input: \"[text]\" → Output: \"[translation]\""+
+                "\"\"\""
+
+        const val DIRECT_PROMPT_TO_THAI = "Translate the following English text to Thai. Output only the translation."
+        const val DIRECT_PROMPT_TO_ENGLISH = "Translate the following Thai text to English. Output only the translation."
+
     }
+
+
 
     var generativeModel: GenerativeModel? = null
         private set
+
     private val sessionDao = AppDatabase.getDatabase(context).sessionDao()
     private val entryDao = AppDatabase.getDatabase(context).entryDao()
 
@@ -88,31 +132,62 @@ You are a real-time English-to-Thai/Isaan interpreter for Pattaya bar conversati
             apiKey = apiKey,
             generationConfig = config,
             safetySettings = safetySettings,
-            systemInstruction = content { text(systemInstruction) }
+            systemInstruction = content { text(systemInstruction) } // Pass the instruction here
         )
     }
 
     fun translateText(text: String): Flow<String> = flow {
         val model = generativeModel ?: throw IllegalStateException("GenerativeModel not initialized")
 
-        var fullResponse = ""
-        model.generateContentStream(text).collect { chunk ->
-            chunk.text?.let {
-                fullResponse += it
-                emit(fullResponse)
+        try {
+            // The model is already configured with the prompt, so just send the text.
+            model.generateContentStream(text).collect { chunk ->
+                chunk.text?.let {
+                    emit(it)
+                } ?: run {
+                    Log.e("Translation", "Empty chunk received")
+                }
             }
+        } catch (e: Exception) {
+            Log.e("Translation", "Error during translation", e)
+            throw e
         }
     }.flowOn(Dispatchers.IO)
 
+
+      /*  var fullResponse = ""
+        try {
+            model.generateContentStream(text).collect { chunk ->
+                chunk.text?.let {
+                    emit(it)
+                } ?: run {
+                    Log.e("Translation", "Empty chunk received")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("Translation", "Error during translation", e)
+            throw e
+        }
+    }.flowOn(Dispatchers.IO)*/
+
     // Database operations
     fun getAllSessions(): Flow<List<ConversationSession>> = sessionDao.getAllSessions()
+
+    fun getSessionsWithPreviews(): Flow<List<SessionPreview>> =
+        sessionDao.getSessionsWithPreviews().map { sessionPreviews ->
+            sessionPreviews.map {
+                SessionPreview(
+                    session = ConversationSession(it.id, it.startTime),
+                    previewText = it.previewText ?: "No messages"
+                )
+            }
+        }.flowOn(Dispatchers.IO)
 
     fun getEntriesForSession(sessionId: Long): Flow<List<TranslationEntry>> = entryDao.getEntriesForSession(sessionId)
 
     suspend fun startNewSession(): Long {
         val newSession = ConversationSession()
-        sessionDao.insertSession(newSession)
-        return newSession.id
+        return sessionDao.insertSession(newSession)
     }
 
     suspend fun saveTranslationEntry(entry: TranslationEntry) {

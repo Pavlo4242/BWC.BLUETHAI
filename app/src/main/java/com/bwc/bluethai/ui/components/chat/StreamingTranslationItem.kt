@@ -1,4 +1,4 @@
-package com.bwc.translator.ui.components.chat
+package com.bwc.bluethai.ui.components.chat
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth

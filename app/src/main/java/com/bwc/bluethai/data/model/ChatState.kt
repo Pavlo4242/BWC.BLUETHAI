@@ -1,8 +1,15 @@
-package com.bwc.translator.data.model
+package com.bwc.bluethai.data.model
 
 data class ChatState(
-    val entries: List<TranslationEntry>,
-    val interimText: String = "",
-    val isInputEnglish: Boolean = true,
-    val streamingTranslation: Pair<String, String>? = null
-)
+    val entries: List<Entry>,
+    val interimText: String,
+    val isInputEnglish: Boolean,
+    val streamingTranslation: Pair<String, String>?
+) {
+    data class Entry(
+        val id: Int,
+        val englishText: String,
+        val thaiText: String,
+        val isFromEnglish: Boolean
+    )
+}

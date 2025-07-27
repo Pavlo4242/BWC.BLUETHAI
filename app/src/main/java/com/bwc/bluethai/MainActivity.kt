@@ -1,6 +1,9 @@
-package com.bwc.translator
+package com.bwc.bluethai
 
+import com.bwc.bluethai.ui.screens.TranslatorScreen
 import android.os.Bundle
+import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -10,27 +13,39 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import com.bwc.translator.ui.screens.DebugLogScreen
-import com.bwc.translator.ui.screens.SettingsScreen
-import com.bwc.translator.ui.screens.TranslatorScreen
-import com.bwc.translator.ui.theme.BWCTranslatorTheme
-import com.bwc.translator.ui.theme.getDynamicTypography
-import com.bwc.translator.viewmodel.TranslatorUiState
-import com.bwc.translator.viewmodel.TranslatorViewModel
-import com.bwc.translator.viewmodel.availableApiKeys
+import com.bwc.bluethai.ui.screens.DebugLogScreen
+import com.bwc.bluethai.ui.screens.SettingsScreen
+import com.bwc.bluethai.ui.theme.BWCTranslatorTheme
+import com.bwc.bluethai.ui.theme.getDynamicTypography
+import com.bwc.bluethai.viewmodel.*
+import java.io.File
+import java.io.IOException
 
 class MainActivity : ComponentActivity() {
 
-    private val translatorViewModel: TranslatorViewModel by viewModels {
-        TranslatorViewModel.TranslatorViewModelFactory(application)
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Log file initialization can be simplified
+        val logFileName = "app_logs.txt"
+        val logFile = File(applicationContext.filesDir, logFileName)
+        if (!logFile.exists()) {
+            try {
+                logFile.createNewFile()
+            } catch (e: IOException) {
+                Log.e("MainActivity", "Error creating log file: ${e.message}")
+            }
+        }
+
         setContent {
-            var currentScreen by remember { mutableStateOf("Translator") }
-            val uiState by translatorViewModel.uiState.collectAsState()
+            val viewModel: TranslatorViewModel by viewModels {
+                TranslatorViewModel.TranslatorViewModelFactory(application)
+            }
+            val uiState by viewModel.uiState.collectAsState()
             val successState = uiState as? TranslatorUiState.Success
+
+            // Use the AppScreen enum for the navigation state
+            var currentScreen by remember { mutableStateOf(AppScreen.Translator) }
 
             val dynamicTypography = getDynamicTypography(successState?.baseFontSize ?: 18)
 
@@ -39,46 +54,51 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    BackHandler(enabled = currentScreen != "Translator") {
+                    // Back handler now uses the enum, which is safer
+                    BackHandler(enabled = currentScreen != AppScreen.Translator) {
                         when (currentScreen) {
-                            "DebugLogs" -> currentScreen = "Settings"
-                            "Settings" -> currentScreen = "Translator"
+                            AppScreen.DebugLogs -> currentScreen = AppScreen.Settings
+                            AppScreen.Settings -> currentScreen = AppScreen.Translator
+                            else -> { /* Do nothing, should not happen */ }
                         }
                     }
 
+                    // Screen switching logic also uses the enum
                     when (currentScreen) {
-                        "Translator" -> TranslatorScreen(
-                            viewModel = translatorViewModel,
-                            onNavigateToSettings = { currentScreen = "Settings" }
-                        )
-                        "Settings" -> {
+                        AppScreen.Translator -> {
+                            TranslatorScreen(
+                                viewModel = viewModel,
+                                onNavigateToSettings = { currentScreen = AppScreen.Settings }
+                            )
+                        }
+                        AppScreen.Settings -> {
                             if (successState != null) {
-                                // This makes the usage of the import explicit to fix the build error.
-                                val keys = availableApiKeys
                                 SettingsScreen(
-                                    availableKeys = keys,
+                                    availableKeys = availableApiKeys,
                                     currentKeyName = successState.currentApiKeyName,
-                                    onApiKeySelected = { translatorViewModel.setApiKey(it) },
+                                    onApiKeySelected = viewModel::setApiKey,
                                     currentFontSize = successState.baseFontSize,
-                                    onFontSizeChange = { translatorViewModel.setFontSize(it) },
-                                    useCustomPrompt = successState.useCustomPrompt,
-                                    onUseCustomPromptChange = { translatorViewModel.setUseCustomPrompt(it) },
+                                    onFontSizeChange = viewModel::setFontSize,
+                                    currentPromptStyle = successState.promptStyle,
+                                    onPromptStyleChange = viewModel::setPromptStyle,
                                     modelSelection = successState.modelSelection,
-                                    onModelSelectionChange = { translatorViewModel.updateModelSelection(it) },
-                                    onNavigateToDebugLogs = { currentScreen = "DebugLogs" },
-                                    onNavigateToHistory = {
-                                        currentScreen = "Translator"
-                                        translatorViewModel.toggleHistoryDialog(true)
+                                    onModelSelectionChange = viewModel::updateModelSelection,
+                                    onNavigateToDebugLogs = { currentScreen = AppScreen.DebugLogs },
+                                    onNavigateToHistory = { viewModel.toggleHistoryDialog(true) },
+                                    onBackupDatabase = {
+                                        viewModel.backupDatabase(this@MainActivity)
+                                        Toast.makeText(this@MainActivity, "Database Backup Initiated.", Toast.LENGTH_SHORT).show()
                                     },
-                                    onNavigateBack = { currentScreen = "Translator" }
+                                    onNavigateBack = { currentScreen = AppScreen.Translator }
                                 )
                             }
                         }
-                        "DebugLogs" -> {
+                        AppScreen.DebugLogs -> {
                             if (successState != null) {
                                 DebugLogScreen(
                                     logs = successState.debugLogs,
-                                    onNavigateBack = { currentScreen = "Settings" }
+                                    onExportLogs = { viewModel.exportLogs(this@MainActivity) },
+                                    onNavigateBack = { currentScreen = AppScreen.Settings }
                                 )
                             }
                         }

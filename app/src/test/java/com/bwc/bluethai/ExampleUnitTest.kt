@@ -1,4 +1,4 @@
-package com.bwc.translator
+package com.bwc.bluethai
 
 import org.junit.Test
 

@@ -1,4 +1,4 @@
-package com.bwc.translator.ui.theme
+package com.bwc.bluethai.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

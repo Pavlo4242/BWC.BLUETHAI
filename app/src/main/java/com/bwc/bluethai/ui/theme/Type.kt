@@ -1,4 +1,4 @@
-package com.bwc.translator.ui.theme
+package com.bwc.bluethai.ui.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle
@@ -6,7 +6,7 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
-import com.bwc.translator.R
+import com.bwc.bluethai.R
 
 // Note: Ensure you have the corresponding font files in the res/font directory.
 val Inter = FontFamily(
