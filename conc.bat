@@ -1,6 +1,6 @@
 @echo off
-set "source_dir=D:\ANDROID\Projects\app\src\main"  REM Replace with your directory path
-set "output_file=kt_complete2.txt"  REM Replace with desired output name
+set "source_dir=D:\ANDROID\Projects\BlueThai\app\src\main\java\com\bwc\bluethai\"  REM Replace with your directory path
+set "output_file=complete.txt"  REM Replace with desired output name
 
 if not exist "%source_dir%" (
     echo Source directory does not exist!

@@ -13,4 +13,14 @@ class Converters {
     fun dateToTimestamp(date: Date?): Long? {
         return date?.time
     }
+
+    @TypeConverter
+    fun fromBoolean(value: Boolean?): Int? {
+        return value?.let { if (it) 1 else 0 }
+    }
+
+    @TypeConverter
+    fun toBoolean(value: Int?): Boolean? {
+        return value?.let { it == 1 }
+    }
 }

@@ -111,7 +111,7 @@ class TranslatorViewModel(application: Application) : ViewModel() {
     private val logFileName = "app_logs.txt"
     private val logFile: File by lazy { File(application.applicationContext.filesDir, logFileName) }
     private val appDatabase: AppDatabase by lazy { AppDatabase.getDatabase(application) }
-    private val databaseName = "translator_database"
+    private val databaseName = "bluethai-db"
 
     private val _internalState = MutableStateFlow(TranslatorUiState.Success())
     private val _currentSessionId = MutableStateFlow<Long?>(null)

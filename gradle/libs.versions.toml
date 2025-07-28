@@ -48,3 +48,4 @@ androidApplication = { id = "com.android.application", version.ref = "androidApp
 jetbrainsKotlinAndroid = { id = "org.jetbrains.kotlin.android", version.ref = "jetbrainsKotlinAndroid" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 
+

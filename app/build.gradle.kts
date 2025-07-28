@@ -1,12 +1,14 @@
 import java.util.Properties
 import java.io.FileInputStream
 import com.android.build.api.artifact.SingleArtifact
-import com.android.build.api.variant.ApplicationAndroidComponentsExtension
+
 
 plugins {
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.jetbrainsKotlinAndroid)
     alias(libs.plugins.ksp)
+    id("androidx.room") version "2.6.1"
+
 }
 
 // Function to read the API key from local.properties
@@ -37,6 +39,10 @@ android {
             useSupportLibrary = true
         }
 
+        room {
+            schemaDirectory("$projectDir/schemas")
+        }
+
         // Expose all API Keys to the app via BuildConfig
         // Expose all API Keys to the app via BuildConfig
 
@@ -54,9 +60,12 @@ android {
                 "proguard-rules.pro"
             )
         }
+        debug {
+            resValue("string", "PORT_NUMBER", "7711")
+        }
     }
 
-    compileOptions {
+        compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -76,6 +85,7 @@ android {
         }
     }
 }
+
 
 androidComponents {
     onVariants { variant ->
@@ -114,6 +124,13 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("io.coil-kt:coil-compose:2.5.0")
 
+//ROOM//
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+
+
+    debugImplementation("com.github.amitshekhariitbhu.Android-Debug-Database:debug-db:1.0.7")
+    debugImplementation("com.guolindev.glance:glance:1.1.0")
 
     // Gemini AI
     implementation(libs.generativeai)
